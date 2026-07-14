@@ -40,10 +40,13 @@ BROWSERS = {
 
 
 def _registry_executable(browser_type: str, registry=None) -> Path | None:
+    # Chromium and Chrome commonly register the same chrome.exe App Paths name.
+    # Treating Chrome's registration as Chromium creates a false installation.
+    if browser_type == "chromium": return None
     if registry is None:
         try: import winreg as registry
         except ImportError: return None
-    exe_names = {"chrome": "chrome.exe", "edge": "msedge.exe", "brave": "brave.exe", "chromium": "chrome.exe", "vivaldi": "vivaldi.exe", "firefox": "firefox.exe"}
+    exe_names = {"chrome": "chrome.exe", "edge": "msedge.exe", "brave": "brave.exe", "vivaldi": "vivaldi.exe", "firefox": "firefox.exe"}
     key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_names[browser_type]}"
     for hive in (getattr(registry, "HKEY_CURRENT_USER", None), getattr(registry, "HKEY_LOCAL_MACHINE", None)):
         if hive is None: continue

@@ -121,7 +121,9 @@ All main-window rows and buttons are generated dynamically from `config.json`. A
 
 ## Browser profiles
 
-Each website references a named entry in `browser_profiles`. The defaults are **Windows Default Browser** and **Chrome Work**. All six built-in sites use Chrome Work, configured as:
+Each website references a named entry in `browser_profiles`. A new configuration contains **Windows Default Browser** and the logical placeholder **Chrome Work (configure during setup)**. The placeholder contains no machine-specific browser path or profile directory. During first-run setup, selecting a detected work profile remaps the existing `chrome-work` logical ID and preserves all website assignments instead of creating a duplicate profile.
+
+For an existing machine that uses Chrome `Profile 4`, the resulting local mapping may be:
 
 ```text
 User Data directory: `%LOCALAPPDATA%\Google\Chrome\User Data`
@@ -129,11 +131,15 @@ Profile Directory: Profile 4
 Fallback to Windows default browser: disabled
 ```
 
-These are deliberately separate. Chrome receives `--user-data-dir=<User Data>` and `--profile-directory=Profile 4`; the combined `...\User Data\Profile 4` path is not a browser executable or a substitute for those two arguments.
+These values are deliberately separate and are examples, not cross-machine defaults. Chrome receives `--user-data-dir=<User Data>` and `--profile-directory=<folder>`; the combined profile path is not a browser executable or a substitute for those two arguments.
 
 To identify another profile, open `chrome://version` in that profile and inspect **Profile Path**. Its parent is the User Data directory and its final folder (such as `Default` or `Profile 4`) is the Profile Directory.
 
 Open **Settings > Browser Profiles** to add, edit, duplicate, delete, or test a profile. The test action clearly confirms before opening `https://www.google.com/`. Select a website in Settings and use its browser-profile dropdown to assign a profile. An in-use profile cannot be deleted.
+
+Settings marks each profile as **Valid** or **Unavailable** and shows its configured directory and website usage. Select an unavailable logical profile and choose **Remap** to scan for a replacement local profile while retaining the same profile ID and all website assignments. Unused unavailable profiles are preserved until explicitly edited, remapped, or deleted.
+
+Settings changes are section-scoped. Changing Windows startup, theme, launch timing, or update preferences does not perform blocking filesystem validation on unrelated browser profiles. Unavailable profiles produce a warning instead. Adding, editing, testing, remapping, or newly assigning a browser profile still requires that profile to be locally valid. When a launch includes both valid and unavailable profiles, valid websites open, unavailable websites are skipped, and the status area lists the skipped website names; fallback is never implicit.
 
 When a Chrome executable path is blank, discovery checks `%PROGRAMFILES%`, `%PROGRAMFILES(X86)%`, then `%LOCALAPPDATA%` for `Google\Chrome\Application\chrome.exe`. A configured explicit path takes precedence. Chrome launch failures do not silently use another browser; fallback occurs only when `fallback_to_system_browser` is explicitly enabled.
 

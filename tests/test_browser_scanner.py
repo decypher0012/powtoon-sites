@@ -12,7 +12,7 @@ from work_launcher.browser_scanner import (BROWSERS, DiscoveredBrowserProfile, f
     scan_browsers, scan_chromium_profiles, scan_firefox_profiles)
 from work_launcher.config import default_config, load_config
 from work_launcher.setup_service import (assign_all_websites, assign_websites, cancel_setup, complete_setup,
-    detected_profile_exists, import_detected_profile, should_run_setup)
+    configure_setup_profile, detected_profile_exists, import_detected_profile, should_run_setup)
 
 
 @pytest.mark.parametrize("browser_type,variable", [
@@ -29,6 +29,12 @@ def test_firefox_installation_and_browser_not_installed():
         exe = Path(tmp) / "Mozilla Firefox/firefox.exe"; exe.parent.mkdir(); exe.touch()
         assert find_browser_executable("firefox", {"PROGRAMFILES": tmp}) == exe
     assert find_browser_executable("firefox", {}, registry=Mock(OpenKey=Mock(side_effect=OSError))) is None
+
+
+def test_chromium_does_not_reuse_ambiguous_chrome_registry_entry():
+    registry=Mock();registry.HKEY_CURRENT_USER=1;registry.HKEY_LOCAL_MACHINE=2
+    assert find_browser_executable("chromium",{},registry=registry) is None
+    registry.OpenKey.assert_not_called()
 
 
 def test_custom_executable_path():
@@ -108,6 +114,17 @@ def test_duplicate_existing_import_and_persistence():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"; complete_setup(path, config); loaded, _ = load_config(path)
         assert key in loaded.browser_profiles; assert loaded.browser_profiles[key].discovery["source"] == "automatic"
+
+
+def test_setup_remaps_existing_logical_work_profile_without_duplicate():
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);exe=root/"chrome.exe";exe.touch();data=root/"User Data";(data/"Profile 2").mkdir(parents=True)
+        config=default_config(); original_assignments=[site.browser_profile for site in config.websites]
+        item=DiscoveredBrowserProfile("chrome","Google Chrome",str(exe),str(data),"Profile 2","Powtoon")
+        key=configure_setup_profile(config,item)
+        assert key=="chrome-work";assert list(config.browser_profiles)==["system-default","chrome-work"]
+        assert config.browser_profiles[key].profile_directory=="Profile 2"
+        assert [site.browser_profile for site in config.websites]==original_assignments
 
 
 def test_first_run_completion_cancellation_and_assignment():

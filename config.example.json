@@ -32,11 +32,8 @@
       "fallback_to_system_browser": false
     },
     "chrome-work": {
-      "name": "Chrome Work",
-      "type": "chrome",
-      "executable_path": "",
-      "user_data_dir": "",
-      "profile_directory": "Profile 4",
+      "name": "Chrome Work (configure during setup)",
+      "type": "system",
       "fallback_to_system_browser": false
     }
   },

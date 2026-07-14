@@ -8,7 +8,8 @@ from tkinter import messagebox, ttk
 from .browser_launcher import BrowserLauncher
 from .browser_profiles import BrowserProfile
 from .browser_scanner import scan_browsers
-from .setup_service import assign_all_websites, cancel_setup, complete_setup, import_detected_profile
+from .setup_service import cancel_setup, complete_setup, configure_setup_profile, import_detected_profile
+from .profile_health import validate_profile_assignment
 from .manual_profile_dialog import ManualProfileDialog
 from .browser_scanner import DiscoveredBrowserProfile
 
@@ -50,14 +51,18 @@ class SetupWizard(tk.Toplevel):
         self.after(50, self._poll_scan)
 
     def _worker(self, generation):
-        self.scan_queue.put((generation, scan_browsers()))
+        try: self.scan_queue.put((generation, scan_browsers(), None))
+        except Exception as exc: self.scan_queue.put((generation, [], type(exc).__name__))
 
     def _poll_scan(self):
-        try: generation, results = self.scan_queue.get_nowait()
+        try: generation, results, error = self.scan_queue.get_nowait()
         except queue.Empty:
             if self.winfo_exists() and self.pending_scans: self.after(50, self._poll_scan)
             return
         self.pending_scans = max(0, self.pending_scans - 1)
+        if error:
+            if hasattr(self,"scan_status"): self.scan_status.set("Browser scan failed. Use Configure Manually or try Rescan.")
+            return
         self._scan_done(generation, results)
 
     def _scan_done(self, generation, results):
@@ -105,10 +110,18 @@ class SetupWizard(tk.Toplevel):
             choice = self.profile_choice.get()
             if choice < 0 or choice >= len(self.profiles): messagebox.showerror(self.title(), "Select or manually configure a work profile.", parent=self); return
             self.selected_profile = self.profiles[choice]
+            candidate = BrowserProfile(self.selected_profile.profile_display_name, self.selected_profile.browser_type,
+                self.selected_profile.executable_path, self.selected_profile.user_data_dir, self.selected_profile.profile_directory)
+            try: validate_profile_assignment_for_setup(candidate)
+            except Exception as exc: messagebox.showerror(self.title(), f"The selected profile is unavailable: {exc}", parent=self); return
         if self.step == 3:
-            key = self.manual_profile_key or import_detected_profile(self.config, self.selected_profile)
+            key = self.manual_profile_key or configure_setup_profile(self.config, self.selected_profile)
             for index, website in enumerate(self.config.websites): website.browser_profile = key if self.site_vars[index].get() else "system-default"
-        if self.step == 4: complete_setup(self.config_path, self.config)
+        if self.step == 4:
+            try:
+                for profile_id in {website.browser_profile for website in self.config.websites}: validate_profile_assignment(self.config, profile_id)
+                complete_setup(self.config_path, self.config)
+            except Exception as exc: messagebox.showerror(self.title(),f"Setup cannot be completed: {exc}",parent=self); return
         if self.step == 5:
             if self.on_complete: self.on_complete()
             self.destroy(); return
@@ -136,3 +149,8 @@ class SetupWizard(tk.Toplevel):
         item = self.selected_profile; profile = BrowserProfile(item.profile_display_name, item.browser_type, item.executable_path, item.user_data_dir, item.profile_directory)
         try: BrowserLauncher().launch(profile, ["https://www.google.com/"], ["Setup profile test"])
         except Exception as exc: messagebox.showerror(self.title(), f"Unable to test profile: {exc}", parent=self)
+
+
+def validate_profile_assignment_for_setup(profile: BrowserProfile) -> None:
+    from .browser_profiles import validate_profile
+    validate_profile(profile, require_files=profile.type != "system")

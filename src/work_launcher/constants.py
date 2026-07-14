@@ -19,10 +19,7 @@ WORK_PROFILE_ID = "chrome-work"
 DEFAULT_BROWSER_PROFILES = {
     SYSTEM_PROFILE_ID: {"name": "Windows Default Browser", "type": "system", "fallback_to_system_browser": False},
     WORK_PROFILE_ID: {
-        "name": "Chrome Work", "type": "chrome", "executable_path": "",
-        "user_data_dir": str(Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) /
-                             "Google" / "Chrome" / "User Data"),
-        "profile_directory": "Profile 4", "fallback_to_system_browser": False,
+        "name": "Chrome Work (configure during setup)", "type": "system", "fallback_to_system_browser": False,
     },
 }
 

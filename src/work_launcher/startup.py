@@ -31,7 +31,11 @@ def set_startup_enabled(enabled: bool, executable_path: Path) -> StartupState:
     entry = get_startup_entry_path()
     entry.parent.mkdir(parents=True, exist_ok=True)
     if enabled:
-        entry.write_text(f'@echo off\r\nstart "" "{executable_path}"\r\n', encoding="utf-8")
+        executable_path=executable_path.resolve()
+        if not executable_path.is_file(): raise OSError("The Work Launcher executable does not exist at the current location.")
+        temporary=entry.with_suffix(entry.suffix+".tmp")
+        temporary.write_text(f'@echo off\r\nstart "" "{executable_path}"\r\n', encoding="utf-8")
+        os.replace(temporary,entry)
     elif entry.exists():
         entry.unlink()
     return StartupState(enabled=enabled, path=entry)
@@ -39,4 +43,3 @@ def set_startup_enabled(enabled: bool, executable_path: Path) -> StartupState:
 
 def open_startup_folder() -> None:
     subprocess.Popen(["explorer", str(get_startup_dir())])
-

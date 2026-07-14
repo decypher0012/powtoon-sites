@@ -10,6 +10,10 @@ class ConfigTests(unittest.TestCase):
     def test_default_website_configuration(self):
         config = default_config()
         self.assertEqual(len(config.websites), 6)
+        self.assertNotEqual(config.browser_profiles["chrome-work"].profile_directory,"Profile 4")
+        self.assertEqual(config.browser_profiles["chrome-work"].type,"system")
+        example=json.loads((Path(__file__).parents[1]/"config.example.json").read_text(encoding="utf-8"))
+        self.assertFalse(any(profile.get("profile_directory")=="Profile 4" for profile in example["browser_profiles"].values()))
 
     def test_all_required_urls(self):
         urls = [w.url for w in default_config().websites]

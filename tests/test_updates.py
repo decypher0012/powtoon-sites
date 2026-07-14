@@ -209,11 +209,12 @@ def test_mandatory_failure_does_not_lock_app_and_skip_version_persists():
 
 def test_current_newer_than_release_never_downgrades_and_minimum_marks_mandatory():
     config=default_config();config.updates.owner="o";config.updates.repository="r";client=Mock();client.check.return_value=ReleaseInfo("0.9.0","2026-01-01","0.8.0",False,"WorkLauncher.exe","https://github.com/o/r/releases/download/v/WorkLauncher.exe","0"*64,1,())
-    with tempfile.TemporaryDirectory() as tmp:
-        assert UpdateManager(config,Path(tmp)/"config.json",client).check() is None
-    client.check.return_value=ReleaseInfo("1.1.0","2026-01-01","1.0.1",False,"WorkLauncher.exe","https://github.com/o/r/releases/download/v/WorkLauncher.exe","0"*64,1,())
-    with tempfile.TemporaryDirectory() as tmp:
-        assert UpdateManager(config,Path(tmp)/"config.json",client).check(force=True).mandatory
+    with patch("work_launcher.update_manager.__version__","1.0.0"):
+        with tempfile.TemporaryDirectory() as tmp:
+            assert UpdateManager(config,Path(tmp)/"config.json",client).check() is None
+        client.check.return_value=ReleaseInfo("1.1.0","2026-01-01","1.0.1",False,"WorkLauncher.exe","https://github.com/o/r/releases/download/v/WorkLauncher.exe","0"*64,1,())
+        with tempfile.TemporaryDirectory() as tmp:
+            assert UpdateManager(config,Path(tmp)/"config.json",client).check(force=True).mandatory
 
 
 def test_install_replaces_backs_up_and_restarts_without_touching_config():

@@ -1,6 +1,8 @@
 import unittest
 
 from work_launcher.config import default_config
+from work_launcher.browser_profiles import BrowserProfile
+from work_launcher.browser_launcher import BrowserLauncher
 from work_launcher.launcher import WebsiteLauncher
 
 
@@ -35,3 +37,10 @@ class LauncherTests(unittest.TestCase):
         launcher = WebsiteLauncher(browser_open=lambda url: True)
         self.assertTrue(launcher.can_launch_all(0))
 
+    def test_mixed_profile_validity_launches_valid_and_skips_invalid_without_fallback(self):
+        config=default_config();calls=[]
+        config.browser_profiles["bad"]=BrowserProfile("Unavailable","chrome",r"C:\missing\chrome.exe",r"C:\missing","Profile 9",False)
+        config.websites[0].browser_profile="system-default";config.websites[1].browser_profile="bad"
+        launcher=WebsiteLauncher(browser_profiles=config.browser_profiles,browser_launcher=BrowserLauncher(system_open=lambda url:calls.append(url) or True))
+        results=launcher.open_selected(config.websites[:2])
+        self.assertTrue(results[0].success);self.assertFalse(results[1].success);self.assertEqual(calls,[config.websites[0].url])

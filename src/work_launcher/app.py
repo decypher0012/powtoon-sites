@@ -32,6 +32,7 @@ from .update_ui import UpdateDialog
 from .version import __version__
 from .update_status import consume_update_status
 from .update_download import cleanup_stale_updates
+from .profile_health import get_profile_health, stale_profile_warning, validate_profile_assignment
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -66,6 +67,8 @@ class WebsiteDialog(tk.Toplevel):
         parsed = urlparse(self.url_var.get().strip())
         if parsed.scheme not in {"http", "https"} or not parsed.netloc: self.error_var.set("Enter a valid http:// or https:// URL."); return
         if not profile: self.error_var.set("Select an existing Browser Profile."); return
+        try: validate_profile_assignment(AppConfig(browser_profiles=self.profiles), profile)
+        except Exception as exc: self.error_var.set(f"Selected browser profile is unavailable: {exc}"); return
         self.result = WebsiteConfig(self.name_var.get().strip(), self.url_var.get().strip(), self.enabled_var.get(),
                                     self.selected_var.get(), profile, self.group_var.get().strip())
         self.destroy()
@@ -75,6 +78,8 @@ class SettingsWindow(tk.Toplevel):
     def __init__(self, master: "WorkLauncherApp") -> None:
         super().__init__(master)
         self.master_app = master
+        self.original_config = copy.deepcopy(master.config)
+        self.dirty_sections: set[str] = set()
         self.title(f"{APP_NAME} Settings")
         self.resizable(True, True)
         self.geometry(f"900x{min(900,max(600,self.winfo_screenheight()-100))}")
@@ -121,14 +126,18 @@ class SettingsWindow(tk.Toplevel):
         profiles.pack(fill="x", pady=(0, 10))
         self.profile_list = tk.Listbox(profiles, height=4)
         self.profile_list.pack(side="left", fill="x", expand=True)
+        self.profile_list.bind("<<ListboxSelect>>", self.on_profile_selected)
         profile_buttons = ttk.Frame(profiles)
         profile_buttons.pack(side="left", padx=(8, 0))
         for text, command in (("Add", self.add_profile), ("Edit", self.edit_profile),
                               ("Duplicate", self.duplicate_profile), ("Delete", self.delete_profile),
+                              ("Remap", self.remap_profile),
                               ("Test Profile (opens tab)", self.test_profile),
                               ("Scan Browsers", self.scan_profiles), ("Rescan Profiles", self.scan_profiles),
                               ("Import Detected Profile", self.scan_profiles), ("Run Setup Wizard Again", self.run_setup_wizard)):
             ttk.Button(profile_buttons, text=text, command=command).pack(fill="x", pady=1)
+        self.profile_status_var=tk.StringVar(value="Select a profile to view its availability and usage.")
+        ttk.Label(frame,textvariable=self.profile_status_var,wraplength=820).pack(fill="x",pady=(0,8))
         form = ttk.Frame(frame)
         form.pack(fill="x")
         self.delay_var = tk.StringVar(value=str(self.master_app.config.settings.launch_delay_seconds))
@@ -284,7 +293,10 @@ class SettingsWindow(tk.Toplevel):
         self.profile_ids = list(self.master_app.config.browser_profiles)
         for key in self.profile_ids:
             profile = self.master_app.config.browser_profiles[key]
-            self.profile_list.insert("end", f"{profile.name} [{profile.type}] ({key})")
+            health = get_profile_health(self.master_app.config, key)
+            state = "Valid" if health.available else "Unavailable"
+            detail = profile.profile_directory or profile.type
+            self.profile_list.insert("end", f"{profile.name} [{state} — {detail}] ({key})")
         self.profile_labels = {self.master_app.config.browser_profiles[key].name: key for key in self.profile_ids}
         self.site_profile_combo.configure(values=list(self.profile_labels))
 
@@ -299,12 +311,21 @@ class SettingsWindow(tk.Toplevel):
         indices = self._selected_indices()
         key = self.profile_labels.get(self.site_profile_var.get())
         if indices and key:
+            try: validate_profile_assignment(self.master_app.config, key)
+            except Exception as exc: messagebox.showerror(APP_NAME, f"Cannot assign an unavailable browser profile: {exc}", parent=self); return
             create_timestamped_backup(self.master_app.config_path)
-            bulk_update(self.master_app.config, indices, browser_profile=key); self._persist_websites()
+            bulk_update(self.master_app.config, indices, browser_profile=key); self.dirty_sections.add("websites"); self._persist_websites()
 
     def _profile_index(self) -> int | None:
         selection = self.profile_list.curselection()
         return selection[0] if selection else None
+
+    def on_profile_selected(self,event=None) -> None:
+        idx=self._profile_index()
+        if idx is None: return
+        key=self.profile_ids[idx]; profile=self.master_app.config.browser_profiles[key]; health=get_profile_health(self.master_app.config,key)
+        usage=f"Assigned to {len(health.referenced_websites)} website(s)" if health.referenced_websites else "Not assigned to any website"
+        self.profile_status_var.set(f"{'Available' if health.available else 'Unavailable'} — {health.reason} — {usage}")
 
     def _edit_values(self, key: str, profile: BrowserProfile) -> tuple[str, BrowserProfile] | None:
         new_key = simpledialog.askstring(APP_NAME, "Profile ID", initialvalue=key, parent=self)
@@ -323,7 +344,10 @@ class SettingsWindow(tk.Toplevel):
             directory = simpledialog.askstring(APP_NAME, "Profile Directory or Firefox Profile Name",
                                                initialvalue=profile.profile_directory, parent=self) or ""
             fallback = messagebox.askyesno(APP_NAME, "Allow explicit fallback to the Windows default browser if Chrome fails?", parent=self)
-        return new_key.strip(), BrowserProfile(name.strip(), browser_type, executable, user_data, directory, fallback)
+        result = BrowserProfile(name.strip(), browser_type, executable, user_data, directory, fallback)
+        try: validate_profile(result, discover_chrome, require_files=result.type != "system")
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Browser profile is unavailable: {exc}", parent=self); return None
+        return new_key.strip(), result
 
     def add_profile(self) -> None:
         result = self._edit_values("new-profile", BrowserProfile("New Browser Profile", "chrome"))
@@ -332,6 +356,7 @@ class SettingsWindow(tk.Toplevel):
             if key in self.master_app.config.browser_profiles:
                 messagebox.showerror(APP_NAME, "That profile ID already exists.", parent=self); return
             self.master_app.config.browser_profiles[key] = profile
+            self.dirty_sections.add("browser_profiles")
             self.refresh_profiles()
 
     def edit_profile(self) -> None:
@@ -347,6 +372,7 @@ class SettingsWindow(tk.Toplevel):
         self.master_app.config.browser_profiles[key] = profile
         for site in self.master_app.config.websites:
             if site.browser_profile == old_key: site.browser_profile = key
+        self.dirty_sections.update({"browser_profiles", "websites"})
         self.refresh_profiles()
 
     def duplicate_profile(self) -> None:
@@ -359,6 +385,7 @@ class SettingsWindow(tk.Toplevel):
             if new_key in self.master_app.config.browser_profiles:
                 messagebox.showerror(APP_NAME, "That profile ID already exists.", parent=self); return
             self.master_app.config.browser_profiles[new_key] = profile
+            self.dirty_sections.add("browser_profiles")
             self.refresh_profiles()
 
     def delete_profile(self) -> None:
@@ -369,6 +396,7 @@ class SettingsWindow(tk.Toplevel):
         if used:
             messagebox.showerror(APP_NAME, "Cannot delete an in-use profile. Reassign: " + ", ".join(used), parent=self); return
         del self.master_app.config.browser_profiles[key]
+        self.dirty_sections.add("browser_profiles")
         self.refresh_profiles()
 
     def test_profile(self) -> None:
@@ -400,7 +428,18 @@ class SettingsWindow(tk.Toplevel):
         self.last_checked_var.set(f"Last Checked: {self.master_app.config.updates.last_checked or 'Never'}")
 
     def scan_profiles(self) -> None:
-        DetectedProfilesDialog(self, self.master_app.config, self.master_app.config_path, self.add_profile)
+        before=copy.deepcopy(self.master_app.config.browser_profiles)
+        dialog=DetectedProfilesDialog(self,self.master_app.config,self.master_app.config_path,self.add_profile); self.wait_window(dialog)
+        if before != self.master_app.config.browser_profiles: self.dirty_sections.add("browser_profiles")
+        self.refresh_profiles()
+
+    def remap_profile(self) -> None:
+        idx=self._profile_index()
+        if idx is None: return
+        before=copy.deepcopy(self.master_app.config.browser_profiles)
+        dialog=DetectedProfilesDialog(self,self.master_app.config,self.master_app.config_path,self.add_profile,self.profile_ids[idx]); self.wait_window(dialog)
+        if before != self.master_app.config.browser_profiles: self.dirty_sections.add("browser_profiles")
+        self.refresh_profiles(); self.master_app.launcher.browser_profiles=self.master_app.config.browser_profiles
 
     def run_setup_wizard(self) -> None:
         SetupWizard(self.master_app, self.master_app.config, self.master_app.config_path,
@@ -408,22 +447,51 @@ class SettingsWindow(tk.Toplevel):
 
     def save(self) -> None:
         try:
-            self.master_app.config.settings.launch_delay_seconds = float(self.delay_var.get())
-            self.master_app.config.settings.duplicate_launch_cooldown_seconds = float(self.cooldown_var.get())
-            self.master_app.config.settings.theme = self.theme_var.get()
-            self.master_app.config.settings.remember_window_position = self.remember_var.get()
-            self.master_app.config.settings.launch_with_windows = self.startup_var.get()
-            self._save_update_fields()
-            for profile in self.master_app.config.browser_profiles.values():
-                validate_profile(profile, discover_chrome, require_files=profile.type != "system")
-            save_settings(self.master_app.config_path, self.master_app.config)
-            set_startup_enabled(self.startup_var.get(), self.master_app.executable_path)
+            delay=float(self.delay_var.get()); cooldown=float(self.cooldown_var.get())
+            if delay < 0 or cooldown < 0: raise ValueError("Launch delay and duplicate cooldown cannot be negative.")
+            original=self.original_config; config=self.master_app.config
+            general_dirty=(delay != original.settings.launch_delay_seconds or cooldown != original.settings.duplicate_launch_cooldown_seconds
+                or self.theme_var.get() != original.settings.theme or self.remember_var.get() != original.settings.remember_window_position)
+            startup_dirty=self.startup_var.get() != original.settings.launch_with_windows
+            update_values=(self.update_owner_var.get().strip(),self.update_repo_var.get().strip(),self.update_channel_var.get(),self.update_policy_var.get(),
+                           self.update_check_var.get(),self.update_download_var.get())
+            original_updates=(original.updates.owner,original.updates.repository,original.updates.channel,original.updates.policy,
+                              original.updates.automatically_check,original.updates.automatically_download)
+            updates_dirty=update_values != original_updates
+            changed_profiles=[key for key,profile in config.browser_profiles.items()
+                              if key not in original.browser_profiles or profile != original.browser_profiles[key]]
+            for key in changed_profiles: validate_profile_assignment(config,key)
+            if general_dirty: self.dirty_sections.add("general")
+            if startup_dirty: self.dirty_sections.add("startup")
+            if updates_dirty: self.dirty_sections.add("updates")
+            if changed_profiles or set(original.browser_profiles)-set(config.browser_profiles): self.dirty_sections.add("browser_profiles")
+            if general_dirty:
+                config.settings.launch_delay_seconds=delay; config.settings.duplicate_launch_cooldown_seconds=cooldown
+                config.settings.theme=self.theme_var.get(); config.settings.remember_window_position=self.remember_var.get()
+            if updates_dirty:
+                (config.updates.owner,config.updates.repository,config.updates.channel,config.updates.policy,
+                 config.updates.automatically_check,config.updates.automatically_download)=update_values
+            previous_startup=config.settings.launch_with_windows
+            if startup_dirty:
+                try: set_startup_enabled(self.startup_var.get(),self.master_app.executable_path)
+                except Exception as exc: raise RuntimeError(f"Windows startup could not be updated: {exc}") from exc
+                config.settings.launch_with_windows=self.startup_var.get()
+            try:
+                if self.dirty_sections: save_settings(self.master_app.config_path,config)
+            except Exception:
+                if startup_dirty:
+                    try: set_startup_enabled(previous_startup,self.master_app.executable_path)
+                    except Exception: logging.error("Could not roll back the startup entry after a settings save failure")
+                config.settings.launch_with_windows=previous_startup
+                raise
             self.master_app.refresh_ui()
             self.master_app.launcher.browser_profiles = self.master_app.config.browser_profiles
-            self.master_app.set_status("Settings saved.")
+            warning=stale_profile_warning(config)
+            self.master_app.set_status("Settings saved." if self.dirty_sections else "No settings changes to save.")
+            if warning: messagebox.showwarning(APP_NAME,"Settings saved.\n\nWarning:\n"+warning,parent=self)
             self.destroy()
         except Exception as exc:
-            messagebox.showerror(APP_NAME, f"Could not save settings: {exc}")
+            messagebox.showerror(APP_NAME, f"Could not save settings: {exc}",parent=self)
 
 
 class WorkLauncherApp(tk.Tk):
@@ -623,6 +691,7 @@ class WorkLauncherApp(tk.Tk):
         if all_launch:
             self.launcher._last_launch_all = time.monotonic()
         self.set_status(f"Launching {len(websites)} websites...")
+        failures=[]
         try:
             for index, website in enumerate(websites):
                 if index > 0 and self.config.settings.launch_delay_seconds > 0:
@@ -630,7 +699,8 @@ class WorkLauncherApp(tk.Tk):
                     self.update()
                 result = self.launcher.open_website(website)
                 self.set_status(result.message)
-            self.set_status("Launch complete.")
+                if not result.success: failures.append(website.name)
+            self.set_status("Launch complete." if not failures else "Launch complete. Skipped: " + ", ".join(failures))
         finally:
             self.is_launching = False
             self._set_launch_controls(True)

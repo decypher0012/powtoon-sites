@@ -6,6 +6,8 @@ from pathlib import Path
 from .browser_profiles import BrowserProfile
 from .browser_scanner import DiscoveredBrowserProfile
 from .config import AppConfig, save_config
+from .constants import WORK_PROFILE_ID
+from .profile_health import validate_profile_assignment
 
 
 def should_run_setup(config: AppConfig, config_existed: bool = True) -> bool:
@@ -41,6 +43,23 @@ def import_detected_profile(config: AppConfig, detected: DiscoveredBrowserProfil
         detected.executable_path, detected.user_data_dir, detected.profile_directory, False,
         {"source": "automatic", "last_scanned": datetime.now().isoformat(timespec="seconds")})
     return key
+
+
+def remap_detected_profile(config: AppConfig, profile_id: str, detected: DiscoveredBrowserProfile) -> str:
+    if profile_id not in config.browser_profiles:
+        raise ValueError(f"Unknown logical browser profile: {profile_id}")
+    existing = config.browser_profiles[profile_id]
+    config.browser_profiles[profile_id] = BrowserProfile(existing.name.replace(" (configure during setup)", ""), detected.browser_type,
+        detected.executable_path, detected.user_data_dir, detected.profile_directory, existing.fallback_to_system_browser,
+        {"source": "automatic", "last_scanned": datetime.now().isoformat(timespec="seconds")}, existing.extra)
+    validate_profile_assignment(config, profile_id)
+    return profile_id
+
+
+def configure_setup_profile(config: AppConfig, detected: DiscoveredBrowserProfile) -> str:
+    if WORK_PROFILE_ID in config.browser_profiles and any(site.browser_profile == WORK_PROFILE_ID for site in config.websites):
+        return remap_detected_profile(config, WORK_PROFILE_ID, detected)
+    return import_detected_profile(config, detected)
 
 
 def assign_all_websites(config: AppConfig, profile_id: str) -> None:

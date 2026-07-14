@@ -47,11 +47,12 @@ def validate_profile(profile: BrowserProfile, discover=None, require_files: bool
         raise BrowserProfileError("Profile Directory must be a folder name such as 'Profile 4'.")
     executable = Path(profile.executable_path).expanduser() if profile.executable_path else (discover() if discover else None)
     if require_files:
+        browser_name={"chrome":"Google Chrome","edge":"Microsoft Edge","brave":"Brave","chromium":"Chromium","vivaldi":"Vivaldi"}.get(profile.type,"Browser")
         if executable is None or not executable.is_file():
-            raise BrowserProfileError("Google Chrome could not be found. Select chrome.exe in Browser Profiles settings.")
+            raise BrowserProfileError(f"{browser_name} could not be found. Select its executable in Browser Profiles settings.")
         user_data = Path(profile.user_data_dir).expanduser()
         if not user_data.is_dir():
-            raise BrowserProfileError(f"Chrome User Data directory was not found:\n{user_data}")
+            raise BrowserProfileError(f"{browser_name} User Data directory was not found:\n{user_data}")
         if not (user_data / directory).is_dir():
-            raise BrowserProfileError(f"Chrome profile {directory} was not found under:\n{user_data}")
+            raise BrowserProfileError(f"{browser_name} profile {directory} was not found under:\n{user_data}")
     return executable

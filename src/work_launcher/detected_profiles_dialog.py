@@ -9,14 +9,14 @@ from .browser_launcher import BrowserLauncher
 from .browser_profiles import BrowserProfile
 from .browser_scanner import scan_browsers
 from .config import save_config
-from .setup_service import detected_profile_exists, import_detected_profile
+from .setup_service import detected_profile_exists, import_detected_profile, remap_detected_profile
 from .manual_profile_dialog import ManualProfileDialog
 
 
 class DetectedProfilesDialog(tk.Toplevel):
-    def __init__(self, master, config, config_path, manual_callback=None):
+    def __init__(self, master, config, config_path, manual_callback=None, remap_target: str | None = None):
         super().__init__(master); self.title("Detected Browser Profiles"); self.geometry("900x480"); self.transient(master); self.grab_set()
-        self.config, self.config_path, self.manual_callback = config, config_path, manual_callback; self.profiles = []; self.generation = 0; self.scan_queue = queue.Queue(); self.pending_scans = 0
+        self.config, self.config_path, self.manual_callback, self.remap_target = config, config_path, manual_callback, remap_target; self.profiles = []; self.generation = 0; self.scan_queue = queue.Queue(); self.pending_scans = 0
         ttk.Label(self, text="Work Launcher only detects browser installation and profile names. It does not read passwords, cookies, browsing history, or website content.", wraplength=850).pack(anchor="w", padx=12, pady=10)
         columns = ("browser", "name", "directory", "default", "status", "added")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode="extended")
@@ -25,7 +25,8 @@ class DetectedProfilesDialog(tk.Toplevel):
         self.tree.pack(fill="both", expand=True, padx=12)
         self.status = tk.StringVar(value="Ready to scan."); ttk.Label(self, textvariable=self.status).pack(anchor="w", padx=12, pady=4)
         buttons = ttk.Frame(self); buttons.pack(fill="x", padx=12, pady=10)
-        for text, command in (("Add Selected", self.add_selected), ("Test Selected", self.test_selected), ("Rescan", self.rescan),
+        primary = "Remap Selected" if remap_target else "Add Selected"
+        for text, command in ((primary, self.add_selected), ("Test Selected", self.test_selected), ("Rescan", self.rescan),
                               ("Configure Manually", self.configure_manual), ("Close", self.destroy)):
             ttk.Button(buttons, text=text, command=command).pack(side="left", padx=3)
         self.bind("<Escape>", lambda event: self.destroy()); self.rescan()
@@ -36,14 +37,18 @@ class DetectedProfilesDialog(tk.Toplevel):
         self.after(50, self._poll_scan)
 
     def _scan_worker(self, generation):
-        self.scan_queue.put((generation, scan_browsers()))
+        try: self.scan_queue.put((generation, scan_browsers(), None))
+        except Exception as exc: self.scan_queue.put((generation, [], type(exc).__name__))
 
     def _poll_scan(self):
-        try: generation, results = self.scan_queue.get_nowait()
+        try: generation, results, error = self.scan_queue.get_nowait()
         except queue.Empty:
             if self.winfo_exists() and self.pending_scans: self.after(50, self._poll_scan)
             return
         self.pending_scans = max(0, self.pending_scans - 1)
+        if error:
+            self.status.set("Browser scan failed. Try Rescan or Configure Manually.")
+            return
         self._show_results(generation, results)
 
     def _show_results(self, generation, results):
@@ -60,6 +65,13 @@ class DetectedProfilesDialog(tk.Toplevel):
     def add_selected(self):
         selected = self._selected()
         if not selected: return
+        if self.remap_target:
+            if len(selected) != 1: messagebox.showinfo(self.title(), "Select one detected profile to remap.", parent=self); return
+            try:
+                remap_detected_profile(self.config, self.remap_target, selected[0]); save_config(self.config_path, self.config)
+                self.status.set("Logical browser profile remapped successfully."); self.rescan()
+            except Exception as exc: messagebox.showerror(self.title(), f"Unable to remap profile: {exc}", parent=self)
+            return
         added = 0
         for profile in selected:
             if not detected_profile_exists(self.config, profile): import_detected_profile(self.config, profile); added += 1
