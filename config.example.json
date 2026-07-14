@@ -1,7 +1,8 @@
-﻿{
+{
+  "config_version": 4,
   "settings": {
     "launch_delay_seconds": 0.5,
-    "duplicate_launch_cooldown_seconds": 5,
+    "duplicate_launch_cooldown_seconds": 5.0,
     "theme": "system",
     "remember_window_position": true,
     "minimize_to_tray": false,
@@ -11,9 +12,19 @@
     "window_x": null,
     "window_y": null
   },
-  "websites": [
-{
-  "config_version": 2,
+  "setup": {"completed": false},
+  "updates": {
+    "provider": "github",
+    "owner": "decypher0012",
+    "repository": "powtoon-sites",
+    "channel": "stable",
+    "policy": "notify",
+    "automatically_check": true,
+    "automatically_download": false,
+    "last_checked": "",
+    "skipped_version": "",
+    "installation_kind": "portable"
+  },
   "browser_profiles": {
     "system-default": {
       "name": "Windows Default Browser",
@@ -24,51 +35,17 @@
       "name": "Chrome Work",
       "type": "chrome",
       "executable_path": "",
-      "user_data_dir": "C:\\Users\\decyp\\AppData\\Local\\Google\\Chrome\\User Data",
+      "user_data_dir": "",
       "profile_directory": "Profile 4",
       "fallback_to_system_browser": false
     }
   },
-      "name": "Renewal Tracker Admin",
-      "url": "https://www.renewals-tracker.powtoon.com/admin",
-      "enabled": true,
-      "selected": true,
-      "browser_profile": "chrome-work"
-    },
-    {
-      "name": "Gmail",
-      "url": "https://mail.google.com/",
-      "enabled": true,
-      "selected": true,
-      "browser_profile": "chrome-work"
-    },
-    {
-      "name": "Google Calendar",
-      "url": "https://calendar.google.com/",
-      "enabled": true,
-      "selected": true,
-      "browser_profile": "chrome-work"
-    },
-    {
-      "name": "Google Keep",
-      "url": "https://keep.google.com/",
-      "enabled": true,
-      "selected": true,
-      "browser_profile": "chrome-work"
-    },
-    {
-      "name": "HubSpot Dashboard",
-      "url": "https://app.hubspot.com/reports-dashboard/3444711/view/10170444",
-      "enabled": true,
-      "selected": true,
-      "browser_profile": "chrome-work"
-    },
-    {
-      "name": "Powtoon Okta",
-      "url": "https://powtoon.okta.com/",
-      "enabled": true,
-      "selected": true,
-      "browser_profile": "chrome-work"
-    }
+  "websites": [
+    {"name":"Renewal Tracker Admin","url":"https://www.renewals-tracker.powtoon.com/admin","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""},
+    {"name":"Gmail","url":"https://mail.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
+    {"name":"Google Calendar","url":"https://calendar.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
+    {"name":"Google Keep","url":"https://keep.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
+    {"name":"HubSpot Dashboard","url":"https://app.hubspot.com/reports-dashboard/3444711/view/10170444","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""},
+    {"name":"Powtoon Okta","url":"https://powtoon.okta.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""}
   ]
 }

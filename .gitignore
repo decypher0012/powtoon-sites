@@ -5,4 +5,7 @@ __pycache__/
 *.pyc
 *.log
 config.json.bak
-
+.pytest_cache/
+*.exe.bak
+*.part
+.env

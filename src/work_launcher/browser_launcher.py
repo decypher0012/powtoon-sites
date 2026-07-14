@@ -19,6 +19,10 @@ def chrome_arguments(executable, profile: BrowserProfile, urls: list[str]) -> li
             f"--profile-directory={profile.profile_directory}", *urls]
 
 
+def firefox_arguments(executable, profile: BrowserProfile, urls: list[str]) -> list[str]:
+    return [str(executable), "-P", profile.profile_directory, "-no-remote", *urls]
+
+
 class BrowserLauncher:
     def __init__(self, popen=subprocess.Popen, system_open=webbrowser.open_new_tab, discover=discover_chrome):
         self.popen, self.system_open, self.discover = popen, system_open, discover
@@ -31,7 +35,7 @@ class BrowserLauncher:
             return
         try:
             executable = validate_profile(profile, self.discover, require_files=True)
-            args = chrome_arguments(executable, profile, urls)
+            args = firefox_arguments(executable, profile, urls) if profile.type == "firefox" else chrome_arguments(executable, profile, urls)
             self.popen(args, shell=False)
             for name, url in zip(website_names, urls):
                 logging.info("Launch succeeded: website=%s origin=%s profile=%s type=%s", name, sanitized_origin(url), profile.name, profile.type)

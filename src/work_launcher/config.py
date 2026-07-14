@@ -28,6 +28,8 @@ class WebsiteConfig:
     enabled: bool = True
     selected: bool = True
     browser_profile: str = WORK_PROFILE_ID
+    launch_group: str = ""
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -42,6 +44,28 @@ class AppSettings:
     window_height: int = 640
     window_x: int | None = None
     window_y: int | None = None
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class SetupConfig:
+    completed: bool = False
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class UpdateConfig:
+    provider: str = "github"
+    owner: str = ""
+    repository: str = ""
+    channel: str = "stable"
+    policy: str = "notify"
+    automatically_check: bool = True
+    automatically_download: bool = False
+    last_checked: str = ""
+    skipped_version: str = ""
+    installation_kind: str = "portable"
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -50,6 +74,9 @@ class AppConfig:
     settings: AppSettings = field(default_factory=AppSettings)
     browser_profiles: dict[str, BrowserProfile] = field(default_factory=dict)
     websites: list[WebsiteConfig] = field(default_factory=list)
+    setup: SetupConfig = field(default_factory=SetupConfig)
+    updates: UpdateConfig = field(default_factory=UpdateConfig)
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 class ConfigError(ValueError):
@@ -57,7 +84,7 @@ class ConfigError(ValueError):
 
 
 def get_config_dir() -> Path:
-    return Path.home() / "AppData" / "Roaming" / APP_FILENAME
+    return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / APP_FILENAME
 
 
 def get_config_path() -> Path:
@@ -69,6 +96,8 @@ def default_config() -> AppConfig:
         settings=AppSettings(),
         browser_profiles={key: BrowserProfile(**value) for key, value in DEFAULT_BROWSER_PROFILES.items()},
         websites=[WebsiteConfig(**item) for item in DEFAULT_WEBSITES],
+        setup=SetupConfig(completed=False),
+        updates=UpdateConfig(),
     )
 
 
@@ -79,12 +108,17 @@ def _validate_url(url: str) -> None:
 
 
 def _parse_settings(data: dict[str, Any]) -> AppSettings:
+    if not isinstance(data,dict): raise ConfigError("settings must be an object")
     settings = AppSettings()
-    for field_name in asdict(settings).keys():
+    known=set(AppSettings.__dataclass_fields__)-{"extra"}
+    for field_name in known:
         if field_name in data:
             setattr(settings, field_name, data[field_name])
+    settings.extra={key:value for key,value in data.items() if key not in known}
     if settings.theme not in {"system", "light", "dark"}:
         raise ConfigError("settings.theme must be one of: system, light, dark")
+    if not isinstance(settings.launch_delay_seconds,(int,float)) or isinstance(settings.launch_delay_seconds,bool): raise ConfigError("settings.launch_delay_seconds must be numeric")
+    if not isinstance(settings.duplicate_launch_cooldown_seconds,(int,float)) or isinstance(settings.duplicate_launch_cooldown_seconds,bool): raise ConfigError("settings.duplicate_launch_cooldown_seconds must be numeric")
     if settings.launch_delay_seconds < 0:
         raise ConfigError("settings.launch_delay_seconds must be >= 0")
     if settings.duplicate_launch_cooldown_seconds < 0:
@@ -113,18 +147,26 @@ def _parse_websites(items: Any) -> list[WebsiteConfig]:
                 enabled=bool(item.get("enabled", True)),
                 selected=bool(item.get("selected", False)),
                 browser_profile=str(item.get("browser_profile", WORK_PROFILE_ID)),
+                launch_group=str(item.get("launch_group", "")).strip(),
+                extra={key:value for key,value in item.items() if key not in WebsiteConfig.__dataclass_fields__},
             )
         )
     return websites
 
 
 def config_to_dict(config: AppConfig) -> dict[str, Any]:
-    return {
+    def serialized(value):
+        data={name:getattr(value,name) for name in value.__dataclass_fields__ if name!="extra"}
+        return {**value.extra,**data}
+    result={
         "config_version": config.config_version,
-        "settings": asdict(config.settings),
-        "browser_profiles": {key: asdict(value) for key, value in config.browser_profiles.items()},
-        "websites": [asdict(item) for item in config.websites],
+        "settings": serialized(config.settings),
+        "browser_profiles": {key: serialized(value) for key, value in config.browser_profiles.items()},
+        "websites": [serialized(item) for item in config.websites],
+        "setup": serialized(config.setup),
+        "updates": serialized(config.updates),
     }
+    return {**config.extra,**result}
 
 
 def validate_config_data(data: Any) -> AppConfig:
@@ -139,7 +181,8 @@ def validate_config_data(data: Any) -> AppConfig:
         if not isinstance(key, str) or not key.strip() or not isinstance(item, dict):
             raise ConfigError("Each browser profile must have a non-empty ID and object value")
         try:
-            profiles[key] = BrowserProfile(**{name: item[name] for name in BrowserProfile.__dataclass_fields__ if name in item})
+            known=set(BrowserProfile.__dataclass_fields__)-{"extra"}
+            profiles[key] = BrowserProfile(**{name:item[name] for name in known if name in item},extra={name:value for name,value in item.items() if name not in known})
             validate_profile(profiles[key], require_files=False)
         except (TypeError, BrowserProfileError) as exc:
             raise ConfigError(f"Invalid browser profile {key}: {exc}") from exc
@@ -147,8 +190,28 @@ def validate_config_data(data: Any) -> AppConfig:
     for website in websites:
         if website.browser_profile not in profiles:
             raise ConfigError(f"Website {website.name} references missing browser profile: {website.browser_profile}")
-    return AppConfig(config_version=int(data.get("config_version", CONFIG_VERSION)), settings=settings,
-                     browser_profiles=profiles, websites=websites)
+    setup_data = data.get("setup", {})
+    if not isinstance(setup_data,dict) or type(setup_data.get("completed",False)) is not bool: raise ConfigError("setup.completed must be true or false")
+    setup = SetupConfig(completed=setup_data.get("completed",False),extra={key:value for key,value in setup_data.items() if key!="completed"})
+    updates_data = data.get("updates", {})
+    updates = UpdateConfig()
+    if isinstance(updates_data, dict):
+        known_updates=set(UpdateConfig.__dataclass_fields__)-{"extra"}
+        for field_name in known_updates:
+            if field_name in updates_data: setattr(updates, field_name, updates_data[field_name])
+        updates.extra={key:value for key,value in updates_data.items() if key not in known_updates}
+    else: raise ConfigError("updates must be an object")
+    if updates.provider!="github" or not isinstance(updates.owner,str) or not isinstance(updates.repository,str): raise ConfigError("updates provider/owner/repository are invalid")
+    if type(updates.automatically_check) is not bool or type(updates.automatically_download) is not bool: raise ConfigError("update automation settings must be true or false")
+    if not isinstance(updates.last_checked,str) or not isinstance(updates.skipped_version,str): raise ConfigError("update status fields must be text")
+    if updates.channel not in {"stable", "beta"}: raise ConfigError("updates.channel must be stable or beta")
+    if updates.policy not in {"notify", "automatic", "manual"}: raise ConfigError("updates.policy must be notify, automatic, or manual")
+    if updates.installation_kind not in {"portable", "installer"}: raise ConfigError("updates.installation_kind must be portable or installer")
+    try: config_version=int(data.get("config_version",CONFIG_VERSION))
+    except (TypeError,ValueError) as exc: raise ConfigError("config_version must be an integer") from exc
+    return AppConfig(config_version=config_version, settings=settings,
+                     browser_profiles=profiles,websites=websites,setup=setup,updates=updates,
+                     extra={key:value for key,value in data.items() if key not in {"config_version","settings","browser_profiles","websites","setup","updates"}})
 
 
 def write_config(path: Path, config: AppConfig) -> None:
@@ -178,20 +241,24 @@ def load_config(path: Path | None = None) -> tuple[AppConfig, list[str]]:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ConfigError("Configuration root must be an object")
-        version = int(raw.get("config_version", 1))
+        try: version=int(raw.get("config_version",1))
+        except (TypeError,ValueError) as exc: raise ConfigError("config_version must be an integer") from exc
         if version < CONFIG_VERSION:
             migrated = dict(raw)
             migrated["config_version"] = CONFIG_VERSION
             migrated["browser_profiles"] = migrated.get("browser_profiles") or DEFAULT_BROWSER_PROFILES
             migrated["websites"] = [dict(site, browser_profile=site.get("browser_profile", WORK_PROFILE_ID))
                                     for site in migrated.get("websites", [])]
+            # Existing installations have already selected profiles; do not force a wizard after upgrade.
+            migrated["setup"] = migrated.get("setup") or {"completed": version >= 2}
+            migrated["updates"] = migrated.get("updates") or config_to_dict(default_config())["updates"]
             config = validate_config_data(migrated)
             backup = backup_config(path)
             try:
                 write_config(path, config)
             except OSError as exc:
-                logging.error("Configuration migration failed; original retained: %s", exc)
-                warnings.append(f"Configuration migration could not be saved; original retained: {exc}")
+                logging.error("Configuration migration failed; original retained: %s",type(exc).__name__)
+                warnings.append("Configuration migration could not be saved; the original file was retained.")
                 return config, warnings
             warnings.append(f"Configuration migrated to version {CONFIG_VERSION}.")
             if backup:

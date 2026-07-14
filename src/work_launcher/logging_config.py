@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from .constants import APP_FILENAME
 
 
 def get_log_dir() -> Path:
-    local = Path.home() / "AppData" / "Local"
+    local = Path(os.environ.get("LOCALAPPDATA",Path.home()/"AppData"/"Local"))
     return local / APP_FILENAME / "logs"
 
 
@@ -25,4 +26,3 @@ def configure_logging() -> Path:
     handler.setFormatter(formatter)
     root.addHandler(handler)
     return log_path
-

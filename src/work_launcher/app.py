@@ -4,10 +4,14 @@ import logging
 import sys
 import time
 import tkinter as tk
+import copy
+import queue
+import threading
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
+from urllib.parse import urlparse
 
-from .config import AppConfig, WebsiteConfig, load_config, save_config
+from .config import AppConfig, WebsiteConfig, get_config_path, load_config, save_config
 from .constants import APP_NAME, DEFAULT_MIN_WINDOW_HEIGHT, DEFAULT_MIN_WINDOW_WIDTH
 from .launcher import WebsiteLauncher
 from .logging_config import configure_logging
@@ -16,6 +20,55 @@ from .startup import set_startup_enabled
 from .browser_profiles import BrowserProfile, validate_profile
 from .browser_discovery import discover_chrome
 from .browser_launcher import BrowserLauncher
+from .website_manager import (UndoHistory, add_website, bulk_update, create_timestamped_backup,
+    delete_websites, duplicate_website, edit_website, export_json, import_websites,
+    move_websites, preview_import, search_websites, validate_website)
+from .website_manager import websites_for_group
+from .detected_profiles_dialog import DetectedProfilesDialog
+from .setup_wizard import SetupWizard
+from .setup_service import should_run_setup
+from .update_manager import UpdateManager
+from .update_ui import UpdateDialog
+from .version import __version__
+from .update_status import consume_update_status
+from .update_download import cleanup_stale_updates
+
+
+class WebsiteDialog(tk.Toplevel):
+    def __init__(self, master, title: str, profiles, website: WebsiteConfig | None = None):
+        super().__init__(master); self.title(title); self.transient(master); self.grab_set(); self.resizable(False, False)
+        self.result = None; self.profiles = profiles; website = website or WebsiteConfig("", "", True, True)
+        self.name_var = tk.StringVar(value=website.name); self.url_var = tk.StringVar(value=website.url)
+        self.enabled_var = tk.BooleanVar(value=website.enabled); self.selected_var = tk.BooleanVar(value=website.selected)
+        self.group_var = tk.StringVar(value=website.launch_group)
+        self.profile_names = {profile.name: key for key, profile in profiles.items()}
+        current = profiles.get(website.browser_profile); self.profile_var = tk.StringVar(value=current.name if current else "")
+        frame = ttk.Frame(self, padding=14); frame.pack(fill="both", expand=True)
+        fields = (("Display Name", ttk.Entry(frame, textvariable=self.name_var, width=52)),
+                  ("URL", ttk.Entry(frame, textvariable=self.url_var, width=52)),
+                  ("Browser Profile", ttk.Combobox(frame, textvariable=self.profile_var, values=list(self.profile_names), state="readonly", width=49)),
+                  ("Launch Group (Optional)", ttk.Combobox(frame, textvariable=self.group_var,
+                    values=["", "Daily Work", "Morning", "Meetings", "Admin", "Google", "HubSpot", "Custom"], width=49)))
+        for row, (label, widget) in enumerate(fields):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
+        ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=4, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Selected by Default", variable=self.selected_var).grid(row=5, column=1, sticky="w")
+        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, foreground="#b00020", wraplength=420).grid(row=6, column=0, columnspan=2, sticky="w", pady=6)
+        buttons = ttk.Frame(frame); buttons.grid(row=7, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=3)
+        ttk.Button(buttons, text="Save", command=self.accept).pack(side="right", padx=3)
+        self.bind("<Escape>", lambda event: self.destroy()); self.bind("<Return>", lambda event: self.accept())
+        fields[0][1].focus_set(); self.wait_visibility()
+
+    def accept(self):
+        profile = self.profile_names.get(self.profile_var.get())
+        if not self.name_var.get().strip(): self.error_var.set("Display Name is required."); return
+        parsed = urlparse(self.url_var.get().strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc: self.error_var.set("Enter a valid http:// or https:// URL."); return
+        if not profile: self.error_var.set("Select an existing Browser Profile."); return
+        self.result = WebsiteConfig(self.name_var.get().strip(), self.url_var.get().strip(), self.enabled_var.get(),
+                                    self.selected_var.get(), profile, self.group_var.get().strip())
+        self.destroy()
 
 
 class SettingsWindow(tk.Toplevel):
@@ -24,27 +77,40 @@ class SettingsWindow(tk.Toplevel):
         self.master_app = master
         self.title(f"{APP_NAME} Settings")
         self.resizable(True, True)
-        self.geometry("720x680")
+        self.geometry(f"900x{min(900,max(600,self.winfo_screenheight()-100))}")
         self.transient(master)
         self.grab_set()
+        self.undo_history = UndoHistory()
+        self.visible_indices: list[int] = []
+        self.bind("<Escape>", lambda event: self.destroy())
         self._build()
 
     def _build(self) -> None:
-        frame = ttk.Frame(self, padding=12)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Websites are primarily edited in config.json.").pack(anchor="w")
+        canvas=tk.Canvas(self,highlightthickness=0); scrollbar=ttk.Scrollbar(self,orient="vertical",command=canvas.yview); canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right",fill="y"); canvas.pack(side="left",fill="both",expand=True)
+        frame=ttk.Frame(canvas,padding=12); window=canvas.create_window((0,0),window=frame,anchor="nw")
+        frame.bind("<Configure>",lambda event:canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",lambda event:canvas.itemconfigure(window,width=event.width))
+        search = ttk.Frame(frame); search.pack(fill="x")
+        ttk.Label(search, text="Search Websites").pack(side="left")
+        self.search_var = tk.StringVar(); self.search_var.trace_add("write", lambda *_: self.refresh())
+        ttk.Entry(search, textvariable=self.search_var).pack(side="left", fill="x", expand=True, padx=(8, 0))
         list_frame = ttk.Frame(frame)
         list_frame.pack(fill="both", expand=True, pady=(10, 10))
-        self.listbox = tk.Listbox(list_frame, height=10)
+        self.listbox = tk.Listbox(list_frame, height=12, selectmode="extended")
         self.listbox.pack(side="left", fill="both", expand=True)
-        for site in self.master_app.config.websites:
-            self.listbox.insert("end", f"{site.name} ({'enabled' if site.enabled else 'disabled'})")
         btns = ttk.Frame(list_frame)
         btns.pack(side="left", fill="y", padx=(10, 0))
-        ttk.Button(btns, text="Enable", command=self.enable_selected).pack(fill="x", pady=2)
-        ttk.Button(btns, text="Disable", command=self.disable_selected).pack(fill="x", pady=2)
+        for text, command in (("Add Website", self.add_site), ("Edit Website", self.edit_site),
+                              ("Delete Website(s)", self.delete_sites), ("Duplicate Website", self.duplicate_site),
+                              ("Enable", self.enable_selected), ("Disable", self.disable_selected)):
+            ttk.Button(btns, text=text, command=command).pack(fill="x", pady=2)
         ttk.Button(btns, text="Move Up", command=self.move_up).pack(fill="x", pady=2)
         ttk.Button(btns, text="Move Down", command=self.move_down).pack(fill="x", pady=2)
+        ttk.Button(btns, text="Test Website", command=self.test_website).pack(fill="x", pady=(8, 2))
+        ttk.Button(btns, text="Import Websites", command=self.import_sites).pack(fill="x", pady=2)
+        ttk.Button(btns, text="Export Websites", command=self.export_sites).pack(fill="x", pady=2)
+        ttk.Button(btns, text="Undo", command=self.undo).pack(fill="x", pady=(8, 2))
         ttk.Label(btns, text="Browser profile").pack(anchor="w", pady=(12, 2))
         self.site_profile_var = tk.StringVar()
         self.site_profile_combo = ttk.Combobox(btns, textvariable=self.site_profile_var, state="readonly", width=23)
@@ -59,7 +125,9 @@ class SettingsWindow(tk.Toplevel):
         profile_buttons.pack(side="left", padx=(8, 0))
         for text, command in (("Add", self.add_profile), ("Edit", self.edit_profile),
                               ("Duplicate", self.duplicate_profile), ("Delete", self.delete_profile),
-                              ("Test Profile (opens tab)", self.test_profile)):
+                              ("Test Profile (opens tab)", self.test_profile),
+                              ("Scan Browsers", self.scan_profiles), ("Rescan Profiles", self.scan_profiles),
+                              ("Import Detected Profile", self.scan_profiles), ("Run Setup Wizard Again", self.run_setup_wizard)):
             ttk.Button(profile_buttons, text=text, command=command).pack(fill="x", pady=1)
         form = ttk.Frame(frame)
         form.pack(fill="x")
@@ -76,57 +144,140 @@ class SettingsWindow(tk.Toplevel):
         self.startup_var = tk.BooleanVar(value=self.master_app.config.settings.launch_with_windows)
         ttk.Checkbutton(form, text="Remember window position", variable=self.remember_var).grid(row=3, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(form, text="Launch Work Launcher when Windows starts", variable=self.startup_var).grid(row=4, column=0, columnspan=2, sticky="w")
+        updates = ttk.LabelFrame(frame, text="Updates", padding=8); updates.pack(fill="x", pady=(8, 0))
+        self.update_owner_var=tk.StringVar(value=self.master_app.config.updates.owner); self.update_repo_var=tk.StringVar(value=self.master_app.config.updates.repository)
+        self.update_channel_var=tk.StringVar(value=self.master_app.config.updates.channel); self.update_policy_var=tk.StringVar(value=self.master_app.config.updates.policy)
+        self.update_install_var=tk.StringVar(value=self.master_app.config.updates.installation_kind)
+        self.update_check_var=tk.BooleanVar(value=self.master_app.config.updates.automatically_check); self.update_download_var=tk.BooleanVar(value=self.master_app.config.updates.automatically_download)
+        ttk.Label(updates,text=f"Current Version: {__version__}").grid(row=0,column=0,columnspan=2,sticky="w")
+        self.latest_version_var=tk.StringVar(); self.last_checked_var=tk.StringVar(); self.refresh_update_status()
+        ttk.Label(updates,textvariable=self.latest_version_var).grid(row=0,column=2,columnspan=2,sticky="w")
+        ttk.Label(updates,textvariable=self.last_checked_var).grid(row=1,column=0,columnspan=4,sticky="w")
+        ttk.Label(updates,text="GitHub Owner").grid(row=2,column=0,sticky="w"); ttk.Entry(updates,textvariable=self.update_owner_var,width=20).grid(row=2,column=1,sticky="w")
+        ttk.Label(updates,text="Repository").grid(row=2,column=2,sticky="w"); ttk.Entry(updates,textvariable=self.update_repo_var,width=20).grid(row=2,column=3,sticky="w")
+        ttk.Label(updates,text="Channel").grid(row=3,column=0,sticky="w"); ttk.Combobox(updates,textvariable=self.update_channel_var,values=["stable","beta"],state="readonly",width=10).grid(row=3,column=1,sticky="w")
+        ttk.Label(updates,text="Policy").grid(row=3,column=2,sticky="w"); ttk.Combobox(updates,textvariable=self.update_policy_var,values=["notify","automatic","manual"],state="readonly",width=12).grid(row=3,column=3,sticky="w")
+        ttk.Label(updates,text="Release Type").grid(row=4,column=0,sticky="w"); ttk.Combobox(updates,textvariable=self.update_install_var,values=["portable","installer"],state="readonly",width=10).grid(row=4,column=1,sticky="w")
+        ttk.Checkbutton(updates,text="Automatically check every 24 hours",variable=self.update_check_var).grid(row=5,column=0,columnspan=2,sticky="w")
+        ttk.Checkbutton(updates,text="Automatically download updates",variable=self.update_download_var).grid(row=5,column=2,columnspan=2,sticky="w")
+        ttk.Button(updates,text="Check Now",command=self.check_updates).grid(row=6,column=0,sticky="w",pady=3)
+        ttk.Button(updates,text="View Release Notes",command=self.view_release_notes).grid(row=6,column=1,columnspan=2,sticky="w",pady=3)
+        ttk.Button(updates,text="About",command=self.show_about).grid(row=6,column=3,sticky="e",pady=3)
+        ttk.Button(updates,text="Clear Skipped Version",command=self.clear_skipped_version).grid(row=7,column=0,columnspan=2,sticky="w",pady=3)
         actions = ttk.Frame(frame)
         actions.pack(fill="x", pady=(14, 0))
         ttk.Button(actions, text="Restore Defaults", command=self.restore_defaults).pack(side="left")
         ttk.Button(actions, text="Save", command=self.save).pack(side="right")
         self.refresh_profiles()
+        self.refresh()
 
     def _selected_index(self) -> int | None:
         sel = self.listbox.curselection()
-        return sel[0] if sel else None
+        return self.visible_indices[sel[0]] if sel else None
+
+    def _selected_indices(self) -> list[int]:
+        return [self.visible_indices[index] for index in self.listbox.curselection()]
+
+    def _persist_websites(self, destructive: bool = False) -> None:
+        if destructive: create_timestamped_backup(self.master_app.config_path)
+        save_config(self.master_app.config_path, self.master_app.config)
+        self.master_app.refresh_ui(); self.refresh()
+
+    def add_site(self) -> None:
+        dialog = WebsiteDialog(self, "Add Website", self.master_app.config.browser_profiles); self.wait_window(dialog)
+        if dialog.result:
+            try:
+                warnings = add_website(self.master_app.config, dialog.result); self._persist_websites()
+                if warnings: messagebox.showwarning(APP_NAME, "\n".join(warnings), parent=self)
+            except Exception as exc: messagebox.showerror(APP_NAME, str(exc), parent=self)
+
+    def edit_site(self) -> None:
+        idx = self._selected_index()
+        if idx is None: return
+        dialog = WebsiteDialog(self, "Edit Website", self.master_app.config.browser_profiles, self.master_app.config.websites[idx]); self.wait_window(dialog)
+        if dialog.result:
+            try:
+                warnings = edit_website(self.master_app.config, idx, dialog.result); self._persist_websites(destructive=True)
+                if warnings: messagebox.showwarning(APP_NAME, "\n".join(warnings), parent=self)
+            except Exception as exc: messagebox.showerror(APP_NAME, str(exc), parent=self)
+
+    def delete_sites(self) -> None:
+        indices = self._selected_indices()
+        if not indices: return
+        names = [self.master_app.config.websites[index].name for index in indices]
+        prompt = f'Delete website "{names[0]}"?' if len(names) == 1 else f"Delete {len(names)} selected websites?"
+        if not messagebox.askyesno(APP_NAME, prompt, parent=self): return
+        self.undo_history.remember(self.master_app.config); create_timestamped_backup(self.master_app.config_path)
+        delete_websites(self.master_app.config, indices); self._persist_websites()
+
+    def duplicate_site(self) -> None:
+        idx = self._selected_index()
+        if idx is not None: duplicate_website(self.master_app.config, idx); self._persist_websites()
 
     def enable_selected(self) -> None:
-        idx = self._selected_index()
-        if idx is None:
-            return
-        self.master_app.config.websites[idx].enabled = True
-        self.refresh()
+        indices = self._selected_indices()
+        if indices: create_timestamped_backup(self.master_app.config_path); bulk_update(self.master_app.config, indices, enabled=True); self._persist_websites()
 
     def disable_selected(self) -> None:
-        idx = self._selected_index()
-        if idx is None:
-            return
-        self.master_app.config.websites[idx].enabled = False
-        self.refresh()
+        indices = self._selected_indices()
+        if indices: create_timestamped_backup(self.master_app.config_path); bulk_update(self.master_app.config, indices, enabled=False); self._persist_websites()
 
     def move_up(self) -> None:
-        idx = self._selected_index()
-        if idx is None or idx == 0:
-            return
-        items = self.master_app.config.websites
-        items[idx - 1], items[idx] = items[idx], items[idx - 1]
-        self.refresh(select=idx - 1)
+        selected = move_websites(self.master_app.config, self._selected_indices(), -1)
+        if selected: create_timestamped_backup(self.master_app.config_path); self._persist_websites(); self.refresh(select_indices=selected)
 
     def move_down(self) -> None:
-        idx = self._selected_index()
-        if idx is None or idx >= len(self.master_app.config.websites) - 1:
-            return
-        items = self.master_app.config.websites
-        items[idx + 1], items[idx] = items[idx], items[idx + 1]
-        self.refresh(select=idx + 1)
+        selected = move_websites(self.master_app.config, self._selected_indices(), 1)
+        if selected: create_timestamped_backup(self.master_app.config_path); self._persist_websites(); self.refresh(select_indices=selected)
 
     def restore_defaults(self) -> None:
+        self.undo_history.remember(self.master_app.config)
+        create_timestamped_backup(self.master_app.config_path)
         self.master_app.config = reset_to_defaults()
-        self.refresh()
+        self._persist_websites()
 
-    def refresh(self, select: int | None = None) -> None:
+    def refresh(self, select: int | None = None, select_indices: list[int] | None = None) -> None:
         self.listbox.delete(0, "end")
-        for site in self.master_app.config.websites:
-            self.listbox.insert("end", f"{site.name} ({'enabled' if site.enabled else 'disabled'})")
-        if select is not None:
-            self.listbox.selection_set(select)
-            self.on_site_selected()
+        self.visible_indices = search_websites(self.master_app.config, self.search_var.get())
+        for index in self.visible_indices:
+            site = self.master_app.config.websites[index]; profile = self.master_app.config.browser_profiles.get(site.browser_profile)
+            self.listbox.insert("end", f"{site.name} | {'Enabled' if site.enabled else 'Disabled'} | {profile.name if profile else site.browser_profile} | {site.url}")
+        for target in select_indices or ([select] if select is not None else []):
+            if target in self.visible_indices: self.listbox.selection_set(self.visible_indices.index(target))
+        if select is not None: self.on_site_selected()
+
+    def test_website(self) -> None:
+        idx = self._selected_index()
+        if idx is None: return
+        self.master_app.set_status("Testing website..."); result = self.master_app.launcher.open_website(self.master_app.config.websites[idx])
+        self.master_app.set_status("Website opened successfully." if result.success else "Unable to launch website.")
+
+    def import_sites(self) -> None:
+        path = filedialog.askopenfilename(title="Import Websites", filetypes=[("JSON", "*.json")], parent=self)
+        if not path: return
+        try:
+            incoming = preview_import(Path(path), self.master_app.config)
+            preview = "\n".join(f"• {site.name}" for site in incoming[:12])
+            if len(incoming) > 12: preview += f"\n… and {len(incoming)-12} more"
+            if not messagebox.askyesno(APP_NAME, f"Import preview ({len(incoming)} websites):\n\n{preview}\n\nContinue?", parent=self): return
+            replace = messagebox.askyesno(APP_NAME, "Replace existing websites? Choose No to merge.", parent=self)
+            skip_names = messagebox.askyesno(APP_NAME, "Skip duplicate display names?", parent=self)
+            skip_urls = messagebox.askyesno(APP_NAME, "Skip duplicate URLs?", parent=self)
+            self.undo_history.remember(self.master_app.config); create_timestamped_backup(self.master_app.config_path)
+            count = import_websites(self.master_app.config, incoming, replace=replace, skip_duplicate_names=skip_names, skip_duplicate_urls=skip_urls)
+            self._persist_websites(); messagebox.showinfo(APP_NAME, f"Imported {count} websites.", parent=self)
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Could not import websites: {exc}", parent=self)
+
+    def export_sites(self) -> None:
+        entire = messagebox.askyesno(APP_NAME, "Export the entire configuration? Choose No for websites only.", parent=self)
+        path = filedialog.asksaveasfilename(title="Export JSON", defaultextension=".json", filetypes=[("JSON", "*.json")], parent=self)
+        if path:
+            try: export_json(Path(path), self.master_app.config, entire); messagebox.showinfo(APP_NAME, "Export complete.", parent=self)
+            except Exception as exc: messagebox.showerror(APP_NAME, f"Could not export: {exc}", parent=self)
+
+    def undo(self) -> None:
+        if self.undo_history.undo(self.master_app.config): self._persist_websites(); self.master_app.set_status("Website change undone.")
+        else: self.master_app.set_status("Nothing to undo.")
 
     def refresh_profiles(self) -> None:
         self.profile_list.delete(0, "end")
@@ -145,10 +296,11 @@ class SettingsWindow(tk.Toplevel):
             self.site_profile_var.set(profile.name if profile else "")
 
     def assign_site_profile(self, event=None) -> None:
-        idx = self._selected_index()
+        indices = self._selected_indices()
         key = self.profile_labels.get(self.site_profile_var.get())
-        if idx is not None and key:
-            self.master_app.config.websites[idx].browser_profile = key
+        if indices and key:
+            create_timestamped_backup(self.master_app.config_path)
+            bulk_update(self.master_app.config, indices, browser_profile=key); self._persist_websites()
 
     def _profile_index(self) -> int | None:
         selection = self.profile_list.curselection()
@@ -160,15 +312,15 @@ class SettingsWindow(tk.Toplevel):
             return None
         name = simpledialog.askstring(APP_NAME, "Display name", initialvalue=profile.name, parent=self)
         browser_type = simpledialog.askstring(APP_NAME, "Browser type (system or chrome)", initialvalue=profile.type, parent=self)
-        if not name or browser_type not in {"system", "chrome"}:
-            messagebox.showerror(APP_NAME, "Name is required and type must be system or chrome.", parent=self)
+        supported = {"system", "chrome", "edge", "brave", "chromium", "vivaldi", "firefox"}
+        if not name or browser_type not in supported:
+            messagebox.showerror(APP_NAME, "Name is required and type must be system, chrome, edge, brave, chromium, vivaldi, or firefox.", parent=self)
             return None
         executable, user_data, directory, fallback = "", "", "", False
-        if browser_type == "chrome":
-            executable = filedialog.askopenfilename(title="Select chrome.exe (Cancel for automatic discovery)",
-                                                     filetypes=[("Chrome executable", "chrome.exe"), ("Programs", "*.exe")], parent=self)
-            user_data = filedialog.askdirectory(title="Select Chrome User Data directory", parent=self) or profile.user_data_dir
-            directory = simpledialog.askstring(APP_NAME, "Chrome Profile Directory (for example Profile 4)",
+        if browser_type != "system":
+            executable = filedialog.askopenfilename(title="Select browser executable", filetypes=[("Programs", "*.exe")], parent=self)
+            user_data = filedialog.askdirectory(title="Select Browser User Data directory", parent=self) or profile.user_data_dir
+            directory = simpledialog.askstring(APP_NAME, "Profile Directory or Firefox Profile Name",
                                                initialvalue=profile.profile_directory, parent=self) or ""
             fallback = messagebox.askyesno(APP_NAME, "Allow explicit fallback to the Windows default browser if Chrome fails?", parent=self)
         return new_key.strip(), BrowserProfile(name.strip(), browser_type, executable, user_data, directory, fallback)
@@ -229,6 +381,31 @@ class SettingsWindow(tk.Toplevel):
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Browser profile test failed: {exc}", parent=self)
 
+    def _save_update_fields(self):
+        updates=self.master_app.config.updates; updates.owner=self.update_owner_var.get().strip(); updates.repository=self.update_repo_var.get().strip()
+        updates.channel=self.update_channel_var.get(); updates.policy=self.update_policy_var.get(); updates.automatically_check=self.update_check_var.get(); updates.automatically_download=self.update_download_var.get()
+        updates.installation_kind=self.update_install_var.get()
+        save_config(self.master_app.config_path,self.master_app.config)
+    def check_updates(self): self._save_update_fields(); self.master_app.check_for_updates(force=True)
+    def view_release_notes(self):
+        release=self.master_app.update_manager.latest
+        if release: UpdateDialog(self.master_app,release,self.master_app.config,self.master_app.config_path)
+        else: messagebox.showinfo(APP_NAME,"Check for updates first. No newer release is currently loaded.",parent=self)
+    def show_about(self): messagebox.showinfo(f"About {APP_NAME}",f"{APP_NAME}\nVersion {__version__}",parent=self)
+    def clear_skipped_version(self):
+        self.master_app.config.updates.skipped_version=""; save_config(self.master_app.config_path,self.master_app.config); self.master_app.set_status("Skipped update version cleared.")
+    def refresh_update_status(self):
+        if not hasattr(self,"latest_version_var"): return
+        release=self.master_app.update_manager.latest; self.latest_version_var.set(f"Latest Version: {release.version if release else 'Unknown'}")
+        self.last_checked_var.set(f"Last Checked: {self.master_app.config.updates.last_checked or 'Never'}")
+
+    def scan_profiles(self) -> None:
+        DetectedProfilesDialog(self, self.master_app.config, self.master_app.config_path, self.add_profile)
+
+    def run_setup_wizard(self) -> None:
+        SetupWizard(self.master_app, self.master_app.config, self.master_app.config_path,
+                    on_complete=lambda: (self.master_app.refresh_ui(), self.refresh_profiles()), manual_callback=self.add_profile)
+
     def save(self) -> None:
         try:
             self.master_app.config.settings.launch_delay_seconds = float(self.delay_var.get())
@@ -236,8 +413,9 @@ class SettingsWindow(tk.Toplevel):
             self.master_app.config.settings.theme = self.theme_var.get()
             self.master_app.config.settings.remember_window_position = self.remember_var.get()
             self.master_app.config.settings.launch_with_windows = self.startup_var.get()
+            self._save_update_fields()
             for profile in self.master_app.config.browser_profiles.values():
-                validate_profile(profile, discover_chrome, require_files=profile.type == "chrome")
+                validate_profile(profile, discover_chrome, require_files=profile.type != "system")
             save_settings(self.master_app.config_path, self.master_app.config)
             set_startup_enabled(self.startup_var.get(), self.master_app.executable_path)
             self.master_app.refresh_ui()
@@ -253,11 +431,15 @@ class WorkLauncherApp(tk.Tk):
         super().__init__()
         self.title(APP_NAME)
         self.minsize(DEFAULT_MIN_WINDOW_WIDTH, DEFAULT_MIN_WINDOW_HEIGHT)
-        self.config_path = config_path or Path.home() / "AppData" / "Roaming" / "WorkLauncher" / "config.json"
+        self.config_path = config_path or get_config_path()
+        config_existed = self.config_path.exists()
         self.executable_path = Path(sys.executable)
         self.log_path = configure_logging()
         self.config, warnings = load_config(self.config_path)
+        cleanup_stale_updates()
+        logging.info("Starting %s version %s", APP_NAME, __version__)
         self.launcher = WebsiteLauncher(browser_profiles=self.config.browser_profiles)
+        self.update_manager = UpdateManager(self.config, self.config_path); self.update_events = queue.Queue()
         self.is_launching = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build()
@@ -266,6 +448,10 @@ class WorkLauncherApp(tk.Tk):
         for warning in warnings:
             self.set_status(warning)
             logging.warning(warning)
+        if should_run_setup(self.config, config_existed): self.after(150, self.open_setup_wizard)
+        elif self.update_manager.due(): self.after(500, self.check_for_updates)
+        update_status=consume_update_status()
+        if update_status: self.after(300,lambda status=update_status:self.show_update_result(status))
 
     def _build(self) -> None:
         root = ttk.Frame(self, padding=12)
@@ -285,6 +471,11 @@ class WorkLauncherApp(tk.Tk):
         ctrl_frame.pack(side="right", fill="y", padx=(10, 0))
         self.open_selected_button = ttk.Button(ctrl_frame, text="Open Selected", command=self.open_selected)
         self.open_selected_button.pack(fill="x", pady=2)
+        ttk.Label(ctrl_frame, text="Launch Group").pack(anchor="w", pady=(8, 1))
+        self.launch_group_var = tk.StringVar(value="All Websites")
+        self.launch_group_combo = ttk.Combobox(ctrl_frame, textvariable=self.launch_group_var, state="readonly", width=20)
+        self.launch_group_combo.pack(fill="x", pady=2)
+        ttk.Button(ctrl_frame, text="Launch Group", command=self.open_launch_group).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Select All", command=self.select_all).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Clear Selection", command=self.clear_selection).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Settings", command=self.open_settings).pack(fill="x", pady=(10, 2))
@@ -312,6 +503,9 @@ class WorkLauncherApp(tk.Tk):
             self.website_vars.append(var)
             ttk.Checkbutton(row, text=site.name, variable=var).pack(side="left", fill="x", expand=True)
             ttk.Button(row, text=f"Open {site.name}", command=lambda s=site: self.open_single(s)).pack(side="right")
+        groups = sorted({site.launch_group for site in self.config.websites if site.launch_group}, key=str.casefold)
+        self.launch_group_combo.configure(values=["All Websites", *groups])
+        if self.launch_group_var.get() not in ["All Websites", *groups]: self.launch_group_var.set("All Websites")
         self.set_status("Ready.")
 
     def center_first_launch(self) -> None:
@@ -355,6 +549,37 @@ class WorkLauncherApp(tk.Tk):
     def open_settings(self) -> None:
         SettingsWindow(self)
 
+    def open_setup_wizard(self) -> None:
+        SetupWizard(self, self.config, self.config_path, on_complete=self.refresh_ui)
+
+    def show_update_result(self,status: dict) -> None:
+        code=status.get("status","")
+        messages={"update_installed":"Update installed successfully.","install_failed_previous_version_restored":"Update installation failed. The previous version was restored.",
+                  "restart_failed_previous_version_restored":"The updated version could not restart. The previous version was restored and restarted.","update_failed":"The update could not be installed. Work Launcher remains available."}
+        message=messages.get(code,"The previous update attempt did not complete."); self.set_status(message)
+        (messagebox.showinfo if code=="update_installed" else messagebox.showwarning)(APP_NAME,message,parent=self)
+
+    def check_for_updates(self, force: bool = False) -> None:
+        self.set_status("Checking for updates...")
+        threading.Thread(target=self._update_worker,args=(force,),daemon=True).start(); self.after(100,self._poll_update)
+    def _update_worker(self, force):
+        try: self.update_events.put(("ok",self.update_manager.check(force=force)))
+        except Exception as exc: self.update_events.put(("error",exc))
+    def _poll_update(self):
+        try: kind,value=self.update_events.get_nowait()
+        except queue.Empty:
+            if self.winfo_exists(): self.after(100,self._poll_update)
+            return
+        for child in self.winfo_children():
+            if isinstance(child,SettingsWindow): child.refresh_update_status()
+        if kind=="error": self.set_status(str(value)); return
+        if value is None: self.set_status(f"Work Launcher {__version__} is up to date."); return
+        self.set_status(f"Version {value.version} is available.")
+        if value.mandatory or value.version != self.config.updates.skipped_version:
+            dialog=UpdateDialog(self,value,self.config,self.config_path)
+            if self.config.updates.policy=="automatic": dialog.after(200,lambda:dialog.download(True))
+            elif self.config.updates.automatically_download: dialog.after(200,lambda:dialog.download(False))
+
     def open_single(self, website: WebsiteConfig) -> None:
         result = self.launcher.open_website(website)
         self.set_status(result.message)
@@ -372,6 +597,14 @@ class WorkLauncherApp(tk.Tk):
         if not websites:
             self.set_status("No websites are selected.")
             return
+        self._launch_sequence(websites)
+
+    def open_launch_group(self) -> None:
+        if self.is_launching:
+            self.set_status("Launch already in progress."); return
+        group = self.launch_group_var.get()
+        websites = websites_for_group(self.config, group)
+        if not websites: self.set_status(f"No enabled websites in launch group {group}."); return
         self._launch_sequence(websites)
 
     def open_all_work_apps(self) -> None:

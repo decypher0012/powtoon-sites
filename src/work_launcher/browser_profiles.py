@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 
 
@@ -16,6 +17,8 @@ class BrowserProfile:
     user_data_dir: str = ""
     profile_directory: str = ""
     fallback_to_system_browser: bool = False
+    discovery: dict[str, str] = field(default_factory=dict)
+    extra: dict = field(default_factory=dict, repr=False)
 
 
 def validate_safe_value(value: str, label: str) -> None:
@@ -29,7 +32,15 @@ def validate_profile(profile: BrowserProfile, discover=None, require_files: bool
         validate_safe_value(value, label)
     if profile.type == "system":
         return None
-    if profile.type != "chrome":
+    chromium_types = {"chrome", "edge", "brave", "chromium", "vivaldi"}
+    if profile.type == "firefox":
+        executable = Path(profile.executable_path).expanduser() if profile.executable_path else None
+        if not profile.profile_directory or profile.profile_directory.startswith("-"):
+            raise BrowserProfileError("Firefox Profile Name is required.")
+        if require_files and (executable is None or not executable.is_file()):
+            raise BrowserProfileError("Mozilla Firefox could not be found. Select firefox.exe in Browser Profiles settings.")
+        return executable
+    if profile.type not in chromium_types:
         raise BrowserProfileError(f"Unsupported browser type: {profile.type}")
     directory = profile.profile_directory
     if not directory or Path(directory).name != directory or directory in {".", ".."} or directory.startswith("-"):
