@@ -31,6 +31,16 @@ jobs:
           $channel = if ($version.Contains('-')) { 'beta' } else { 'stable' }
           "RELEASE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_DATE=$(git show -s --format=%cs HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install verified Inno Setup compiler
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $asset = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
+          gh release download is-6_7_3 --repo jrsoftware/issrc --pattern "innosetup-6.7.3.exe" --dir $env:RUNNER_TEMP
+          gh release verify-asset $asset --repo jrsoftware/issrc
+          $process = Start-Process -FilePath $asset -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Inno Setup installation failed with exit code $($process.ExitCode)" }
       - name: Test and build release assets
         shell: cmd
         run: build.bat
@@ -41,4 +51,4 @@ jobs:
         run: |
           gh release view "${{ github.ref_name }}" *> $null
           if ($LASTEXITCODE -eq 0) { throw "Release already exists; refusing to overwrite it" }
-          gh release create "${{ github.ref_name }}" --verify-tag --generate-notes --title "Work Launcher ${{ github.ref_name }}" dist/WorkLauncher.exe dist/Updater.exe dist/SHA256SUMS.txt dist/release.json
+          gh release create "${{ github.ref_name }}" --verify-tag --generate-notes --title "Work Launcher ${{ github.ref_name }}" dist/WorkLauncher.exe dist/Updater.exe dist/WorkLauncher-Setup.exe dist/SHA256SUMS.txt dist/release.json

@@ -6,7 +6,7 @@ Work Launcher is a lightweight Windows Tkinter app that opens six work websites 
 
 Work Launcher has a native two-process updater. `WorkLauncher.exe` checks the configured GitHub repository through the GitHub Releases API; it never scrapes release pages. A verified update downloads in the background to `%LOCALAPPDATA%\WorkLauncher\Updates\`, then launches the separate `Updater.exe` and exits. The updater waits for Work Launcher, re-verifies file size and SHA-256, renames the current executable to `WorkLauncher.exe.bak`, installs the new executable, and restarts it. If replacement fails, the backup is restored automatically. Configuration, logs, websites, and browser profiles are not replaced.
 
-Configure the GitHub owner, repository, stable/beta channel, portable/installer release type, and policy under **Settings > Updates**. Policies are Notify, Automatic, and Manual; Notify is the default. Automatic checks are limited to once per session and at most every 24 hours, based on the last successful check. Offline errors, API rate limits, absent releases, invalid JSON, and missing assets are reported without interrupting normal use. The About dialog, Settings, logs, and update dialog all use the canonical version from `src/work_launcher/version.py`.
+Configure the GitHub owner, repository, stable/beta channel, and policy under **Settings > Updates**. The installation type is detected automatically from a minimal marker beside installed executables; copies without that exact marker are portable. Users cannot silently switch update types in Settings. Policies are Notify, Automatic, and Manual; Notify is the default. Automatic checks are limited to once per session and at most every 24 hours, based on the last successful check. Offline errors, API rate limits, absent releases, invalid JSON, and missing assets are reported without interrupting normal use. The About dialog, Settings, logs, and update dialog all use the canonical version from `src/work_launcher/version.py`.
 
 For this project, configure `owner` as `decypher0012` and `repository` as `powtoon-sites`. Remind Me Later closes the dialog and allows the normal 24-hour schedule to apply; a manual Check Now remains available. Skip suppresses only that exact version and can be cleared in Settings. Mandatory releases disable Skip but never block offline startup or lock the application when download/installation fails. Automatic Download downloads and verifies without installing; the Automatic policy installs after verification. Work Launcher never automatically downgrades, including when moving from beta back to stable.
 
@@ -17,6 +17,7 @@ Every release must contain:
 ```text
 WorkLauncher.exe
 Updater.exe
+WorkLauncher-Setup.exe
 SHA256SUMS.txt
 release.json
 ```
@@ -30,9 +31,9 @@ release.json
   "channel": "stable",
   "minimum_supported_version": "1.0.0",
   "mandatory": false,
-  "download": {"portable": "WorkLauncher.exe"},
-  "size": {"portable": 12345678},
-  "sha256": {"portable": "64-lowercase-hex-characters"},
+  "download": {"portable": "WorkLauncher.exe", "installer": "WorkLauncher-Setup.exe"},
+  "size": {"portable": 12345678, "installer": 15000000},
+  "sha256": {"portable": "64-lowercase-hex-characters", "installer": "64-lowercase-hex-characters"},
   "release_notes": ["Description of the release"]
 }
 ```
@@ -41,29 +42,52 @@ Stable publishing uses a stable SemVer tag such as `v1.0.1`; beta publishing use
 
 This integrity model detects corruption and inconsistent release assets, but it does not establish publisher identity equivalent to Authenticode or independently signed metadata. Current binaries are unsigned and Windows SmartScreen may warn on first use. A future signing path is to obtain an organization-controlled Authenticode certificate, protect signing credentials in a restricted release environment, sign both executables before checksum generation, and verify signatures in the updater. Do not add signing claims until that pipeline exists and is validated.
 
-Installer-based releases may add `download.installer` and `sha256.installer` entries pointing to `WorkLauncher-Setup.exe`. When Release Type is Installer, the standalone updater verifies and launches that exact GitHub asset after Work Launcher exits; the installer owns its installation transaction and restart behavior. Portable releases use the built-in executable backup and rollback transaction.
+Installed copies require the `WorkLauncher-Setup.exe` metadata entries. The standalone updater verifies the installer, waits for the authenticated Work Launcher process to exit, and launches it silently with `shell=False`. It never falls back to the portable asset when the required installer asset is missing. Portable copies continue to use the built-in executable backup and rollback transaction.
+
+## Windows installer
+
+`WorkLauncher-Setup.exe` is a per-user Inno Setup package. It requires no administrator privileges and installs only:
+
+```text
+%LOCALAPPDATA%\Programs\WorkLauncher\WorkLauncher.exe
+%LOCALAPPDATA%\Programs\WorkLauncher\Updater.exe
+%LOCALAPPDATA%\Programs\WorkLauncher\install-mode.json
+```
+
+It creates a Start-menu shortcut and offers an unchecked desktop shortcut. Its permanent AppId is `7A07E62F-0C3A-45D2-91E8-4E5BE929A8D9`; do not change this identity between releases. Upgrades retain the previous installation directory and use Windows Restart Manager for locked application files.
+
+The installer never packages or deletes `%APPDATA%\WorkLauncher` configuration or `%LOCALAPPDATA%\WorkLauncher` logs and update downloads. Uninstall therefore retains user configuration for recovery or reinstallation.
+
+Unattended per-user installation is supported:
+
+```bat
+WorkLauncher-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER
+```
+
+Add `/NOLAUNCH` when deployment tooling should not start Work Launcher after installation, and `/NOICONS` when no shortcuts should be created. The generated uninstaller accepts `/VERYSILENT /NORESTART`; it removes program files and shortcuts but retains Work Launcher user data.
 
 ### Publishing a release
 
 1. Update the single `__version__` value using semantic versioning (`major.minor.patch`).
 2. Commit and push the change.
 3. Create and push a matching tag, for example `v1.2.0`.
-4. The Windows GitHub Actions release workflow verifies that the tag matches the canonical version, runs every test, builds both executables, creates checksums and metadata, and uploads all four assets to a new GitHub Release.
+4. The Windows GitHub Actions workflow verifies the tag, obtains verified Inno Setup 6.7.3 from its immutable upstream release, runs every test, builds both application executables and the installer, then uploads all five release assets.
 
 The workflow runs only on pushed version-like tags, builds the tagged commit, pins third-party actions by commit SHA, refuses an existing release, and performs a release-content audit before publication. To revoke a bad release, disable automatic publication first if needed, delete the GitHub Release, delete the associated tag only after confirming no corrected release will reuse it, increment the patch version, and publish a new tag. Do not replace assets under an existing version.
 
-To roll back a bad portable release locally, close Work Launcher, confirm `WorkLauncher.exe.bak` is present beside it, rename the faulty executable out of the way, rename the `.bak` file to `WorkLauncher.exe`, and launch it. Preserve `%APPDATA%\WorkLauncher\config.json`; configuration migrations already create their own backup. For a published rollback, release a new higher patch version containing the last known-good code—never publish an automatic downgrade.
+To roll back a bad portable release locally, close Work Launcher, confirm `WorkLauncher.exe.bak` is present beside it, rename the faulty executable out of the way, rename the `.bak` file to `WorkLauncher.exe`, and launch it. For an installed copy, rerun the previous known-good installer locally, then publish the correction as a new higher patch version. Preserve `%APPDATA%\WorkLauncher\config.json`; configuration migrations already create their own backup. Never publish an automatic downgrade.
 
-For a local release build, run `build.bat`. It creates both executables plus `SHA256SUMS.txt` and `release.json` in `dist\`.
+For a local release build, install Inno Setup 6.7.3 and run `build.bat`. It locates `ISCC.exe` on `PATH` or in standard per-user/system locations, derives both the displayed SemVer and numeric Windows file version from `src/work_launcher/version.py`, builds all three executables, audits the installer definition and release contents, and generates `SHA256SUMS.txt` and `release.json` in `dist\`.
 
 Troubleshooting:
 
 - **Offline or rate limited:** retry later or choose Manual updates; the application remains usable.
-- **Missing assets/invalid metadata:** republish the release with all four generated files from the same build.
+- **Missing assets/invalid metadata:** republish the release with all five generated files from the same build.
 - **Checksum or size failure:** delete the partial update and retry; Work Launcher will not install it.
 - **Replacement or restart failure:** check free disk space, antivirus quarantine, folder permissions, and file locks. The updater restores `WorkLauncher.exe.bak` automatically when its transaction fails.
-- **Portable location is read-only:** move both executables to a user-writable folder or use a future installer-based release.
+- **Portable location is read-only:** move both executables to a user-writable folder or install `WorkLauncher-Setup.exe`.
 - **Updater missing:** keep `Updater.exe` beside `WorkLauncher.exe`.
+- **Installer compiler missing:** install Inno Setup 6.7.3 or place `ISCC.exe` on `PATH`.
 
 ## First-run setup and browser scanner
 
@@ -138,7 +162,7 @@ run.bat
 build.bat
 ```
 
-`build.bat` creates/uses `.venv`, installs test/build dependencies, runs the complete test suite, stops on failure, and creates the no-console one-file executable at `dist\WorkLauncher.exe`. Re-run it whenever source changes. Startup integration uses the current user's Startup folder and requires no administrator privileges.
+`build.bat` creates/uses `.venv`, installs test/build dependencies, runs the complete test suite, stops on failure, and creates the no-console executables plus `dist\WorkLauncher-Setup.exe`. Re-run it whenever source changes. Startup integration uses the current user's Startup folder and requires no administrator privileges.
 
 Open All, Open Selected, individual buttons, selection/window persistence, launch delay, duplicate cooldown, in-progress locking, Settings, status, startup integration, configuration backup/recovery, URL validation, and rotating logging remain supported.
 

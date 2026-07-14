@@ -13,6 +13,7 @@ import pytest
 
 from work_launcher.config import default_config,load_config,save_config
 from work_launcher.github_updates import GitHubReleaseClient
+from work_launcher.installation import installation_kind
 from work_launcher.update_download import download_release, verify_download
 from work_launcher.update_manager import UpdateManager
 from work_launcher.update_models import (ReleaseInfo, UpdateCancelled, UpdateIntegrityError, UpdateMetadataError,
@@ -70,6 +71,23 @@ def test_installer_asset_selection_when_published():
              base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{installer_hash}  WorkLauncher-Setup.exe\n".encode()}
     result=GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r","stable","installer")
     assert result.asset_kind=="installer";assert result.asset_name=="WorkLauncher-Setup.exe"
+
+
+def test_installed_mode_requires_installer_asset_without_portable_fallback():
+    release,metadata,digest,base=github_payload()
+    mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),base+"release.json":json.dumps(metadata).encode(),
+             base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n".encode()}
+    with pytest.raises(UpdateMetadataError,match="required installer"):
+        GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r","stable","installer")
+
+
+def test_installation_kind_uses_only_exact_local_marker(tmp_path):
+    executable=tmp_path/"WorkLauncher.exe";executable.write_bytes(b"app")
+    assert installation_kind(executable)=="portable"
+    (tmp_path/"install-mode.json").write_text('{"mode":"wrong"}',encoding="utf-8")
+    assert installation_kind(executable)=="portable"
+    (tmp_path/"install-mode.json").write_text('{"mode":"inno-user"}',encoding="utf-8")
+    assert installation_kind(executable)=="installer"
 
 
 @pytest.mark.parametrize("mutation",["missing_metadata","missing_asset","bad_sha","mismatched_sums"])
@@ -298,4 +316,6 @@ def test_verified_installer_mode_waits_and_launches_without_shell():
     with tempfile.TemporaryDirectory() as tmp:
         setup=Path(tmp)/"WorkLauncher-Setup.exe";setup.write_bytes(data)
         install_with_installer(setup,digest,len(data),42,waiter=waiter,launcher=launcher)
-        waiter.assert_called_once_with(42,60.0);assert launcher.call_args.args[0]==[str(setup.resolve())];assert launcher.call_args.kwargs["shell"] is False
+        waiter.assert_called_once_with(42,60.0)
+        assert launcher.call_args.args[0]==[str(setup.resolve()),"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS"]
+        assert launcher.call_args.kwargs["shell"] is False

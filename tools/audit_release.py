@@ -26,7 +26,7 @@ def digest(path: Path) -> str:
 
 def audit(dist: Path) -> None:
     files=[item for item in dist.iterdir() if item.is_file()]
-    names={item.name for item in files}; required={"WorkLauncher.exe","Updater.exe","SHA256SUMS.txt","release.json"}
+    names={item.name for item in files}; required={"WorkLauncher.exe","Updater.exe","WorkLauncher-Setup.exe","SHA256SUMS.txt","release.json"}
     if not required<=names: raise RuntimeError(f"Missing release files: {sorted(required-names)}")
     if names-ALLOWED: raise RuntimeError(f"Unexpected release files: {sorted(names-ALLOWED)}")
     if any(item.name.lower() in PROHIBITED_NAMES for item in files): raise RuntimeError("Release contains a prohibited file name.")

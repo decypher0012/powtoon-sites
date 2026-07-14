@@ -157,7 +157,7 @@ class SettingsWindow(tk.Toplevel):
         ttk.Label(updates,text="Repository").grid(row=2,column=2,sticky="w"); ttk.Entry(updates,textvariable=self.update_repo_var,width=20).grid(row=2,column=3,sticky="w")
         ttk.Label(updates,text="Channel").grid(row=3,column=0,sticky="w"); ttk.Combobox(updates,textvariable=self.update_channel_var,values=["stable","beta"],state="readonly",width=10).grid(row=3,column=1,sticky="w")
         ttk.Label(updates,text="Policy").grid(row=3,column=2,sticky="w"); ttk.Combobox(updates,textvariable=self.update_policy_var,values=["notify","automatic","manual"],state="readonly",width=12).grid(row=3,column=3,sticky="w")
-        ttk.Label(updates,text="Release Type").grid(row=4,column=0,sticky="w"); ttk.Combobox(updates,textvariable=self.update_install_var,values=["portable","installer"],state="readonly",width=10).grid(row=4,column=1,sticky="w")
+        ttk.Label(updates,text="Installation Type").grid(row=4,column=0,sticky="w"); ttk.Label(updates,textvariable=self.update_install_var).grid(row=4,column=1,sticky="w")
         ttk.Checkbutton(updates,text="Automatically check every 24 hours",variable=self.update_check_var).grid(row=5,column=0,columnspan=2,sticky="w")
         ttk.Checkbutton(updates,text="Automatically download updates",variable=self.update_download_var).grid(row=5,column=2,columnspan=2,sticky="w")
         ttk.Button(updates,text="Check Now",command=self.check_updates).grid(row=6,column=0,sticky="w",pady=3)
@@ -384,7 +384,7 @@ class SettingsWindow(tk.Toplevel):
     def _save_update_fields(self):
         updates=self.master_app.config.updates; updates.owner=self.update_owner_var.get().strip(); updates.repository=self.update_repo_var.get().strip()
         updates.channel=self.update_channel_var.get(); updates.policy=self.update_policy_var.get(); updates.automatically_check=self.update_check_var.get(); updates.automatically_download=self.update_download_var.get()
-        updates.installation_kind=self.update_install_var.get()
+        updates.installation_kind=self.master_app.update_manager.config.updates.installation_kind
         save_config(self.master_app.config_path,self.master_app.config)
     def check_updates(self): self._save_update_fields(); self.master_app.check_for_updates(force=True)
     def view_release_notes(self):

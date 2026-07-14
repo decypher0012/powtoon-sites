@@ -48,7 +48,8 @@ def verify_download(path: Path, expected_sha256: str, expected_size: int = 0) ->
 
 def download_release(release: ReleaseInfo, destination: Path | None = None, progress: Callable[[int, int], None] | None = None,
                      cancel_event: Event | None = None, opener: Callable | None = None) -> Path:
-    opener = opener or urllib.request.urlopen; destination = destination or (updates_dir() / f"WorkLauncher-{release.version}.exe")
+    default_name = f"WorkLauncher-Setup-{release.version}.exe" if release.asset_kind == "installer" else f"WorkLauncher-{release.version}.exe"
+    opener = opener or urllib.request.urlopen; destination = destination or (updates_dir() / default_name)
     temporary = destination.with_suffix(destination.suffix + ".part"); destination.parent.mkdir(parents=True, exist_ok=True)
     parsed=urllib.parse.urlparse(release.asset_url)
     if parsed.scheme!="https" or parsed.hostname!="github.com": raise UpdateNetworkError("Update downloads require the configured GitHub HTTPS release asset.")

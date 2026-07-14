@@ -114,4 +114,5 @@ def install_with_installer(installer: Path, expected_sha256: str, expected_size:
     if process_validator and current_executable: process_validator(parent_pid,current_executable)
     if ready_callback: ready_callback()
     waiter(parent_pid, 60.0)
-    logging.info("Starting verified installer update: %s", installer.name); launcher([str(installer)], shell=False)
+    arguments=[str(installer),"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS"]
+    logging.info("Starting verified installer update: %s", installer.name); launcher(arguments, shell=False)

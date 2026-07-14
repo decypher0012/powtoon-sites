@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import AppConfig, save_config
 from .github_updates import GitHubReleaseClient
+from .installation import installation_kind
 from .update_models import ReleaseInfo, is_newer, parse_version
 from .version import __version__
 
@@ -14,6 +15,7 @@ from .version import __version__
 class UpdateManager:
     def __init__(self, config: AppConfig, config_path: Path, client: GitHubReleaseClient | None = None):
         self.config, self.config_path, self.client = config, config_path, client or GitHubReleaseClient(); self.checked_this_session = False; self.latest: ReleaseInfo | None = None
+        self.config.updates.installation_kind = installation_kind()
 
     def due(self, now: datetime | None = None) -> bool:
         if not self.config.updates.owner.strip() or not self.config.updates.repository.strip(): return False

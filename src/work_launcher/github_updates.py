@@ -113,7 +113,10 @@ class GitHubReleaseClient:
         if "release.json" not in assets or "SHA256SUMS.txt" not in assets: raise UpdateMetadataError("Release is missing release.json or SHA256SUMS.txt.")
         metadata=self._json(self._release_asset_url(owner,repository,assets["release.json"]))
         version,minimum,_,_=validate_release_metadata(metadata,channel=channel,tag_name=str(release.get("tag_name","")),assets=assets)
-        selected_kind=installation_kind if installation_kind in metadata["download"] else "portable"
+        if installation_kind not in {"portable", "installer"}: raise UpdateMetadataError("Unsupported installation type.")
+        if installation_kind not in metadata["download"]:
+            raise UpdateMetadataError(f"This release does not contain the required {installation_kind} update asset.")
+        selected_kind=installation_kind
         asset_name=metadata["download"][selected_kind]; expected=metadata["sha256"][selected_kind].lower(); expected_size=metadata["size"][selected_kind]
         try: sums=self._get(self._release_asset_url(owner,repository,assets["SHA256SUMS.txt"])).decode("utf-8",errors="strict")
         except UnicodeError as exc: raise UpdateMetadataError("SHA256SUMS.txt is not valid UTF-8 text.") from exc
