@@ -38,7 +38,7 @@ jobs:
         run: |
           $asset = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
           gh release download is-6_7_3 --repo jrsoftware/issrc --pattern "innosetup-6.7.3.exe" --dir $env:RUNNER_TEMP
-          gh release verify-asset $asset --repo jrsoftware/issrc
+          gh release verify-asset is-6_7_3 $asset --repo jrsoftware/issrc
           $process = Start-Process -FilePath $asset -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Inno Setup installation failed with exit code $($process.ExitCode)" }
       - name: Test and build release assets
