@@ -203,8 +203,19 @@ def test_mandatory_failure_does_not_lock_app_and_skip_version_persists():
     with tempfile.TemporaryDirectory() as tmp:
         path=Path(tmp)/"config.json";save_config(path,config);manager=UpdateManager(config,path,client)
         with pytest.raises(UpdateNetworkError):manager.check()
-        assert not manager.checked_this_session;assert config.updates.last_checked=="";assert path.exists()
+        assert not manager.checked_this_session;assert config.updates.last_checked=="";assert path.exists();assert manager.last_error=="offline"
         config.updates.skipped_version="1.2.3";save_config(path,config);loaded,_=load_config(path);assert loaded.updates.skipped_version=="1.2.3"
+
+
+def test_update_manager_snapshot_reports_current_state():
+    config=default_config();config.updates.owner="o";config.updates.repository="r";client=Mock();client.check.return_value=release_info()
+    with tempfile.TemporaryDirectory() as tmp:
+        manager=UpdateManager(config,Path(tmp)/"config.json",client); manager.check()
+        snapshot=manager.snapshot()
+        assert snapshot["repository"]=="r"
+        assert snapshot["latest_version"]=="2.0.0"
+        assert snapshot["last_error"]=="None"
+        assert snapshot["next_check"] in {"Due now", "Manual"} or str(snapshot["next_check"]).startswith("Due ")
 
 
 def test_current_newer_than_release_never_downgrades_and_minimum_marks_mandatory():

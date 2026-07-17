@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .config import AppConfig, WebsiteConfig, get_config_path, load_config, save_config
-from .constants import APP_NAME, DEFAULT_MIN_WINDOW_HEIGHT, DEFAULT_MIN_WINDOW_WIDTH
+from .constants import APP_NAME, DEFAULT_MIN_WINDOW_HEIGHT, DEFAULT_MIN_WINDOW_WIDTH, UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY
 from .launcher import WebsiteLauncher
 from .logging_config import configure_logging
 from .settings import reset_to_defaults, save_settings
@@ -28,6 +28,7 @@ from .detected_profiles_dialog import DetectedProfilesDialog
 from .setup_wizard import SetupWizard
 from .setup_service import should_run_setup
 from .update_manager import UpdateManager
+from .update_diagnostics import UpdateDiagnosticsDialog
 from .update_ui import UpdateDialog
 from .version import __version__
 from .update_status import consume_update_status
@@ -169,7 +170,9 @@ class SettingsWindow(tk.Toplevel):
         ttk.Button(updates,text="Check Now",command=self.check_updates).grid(row=6,column=0,sticky="w",pady=3)
         ttk.Button(updates,text="View Release Notes",command=self.view_release_notes).grid(row=6,column=1,columnspan=2,sticky="w",pady=3)
         ttk.Button(updates,text="About",command=self.show_about).grid(row=6,column=3,sticky="e",pady=3)
-        ttk.Button(updates,text="Clear Skipped Version",command=self.clear_skipped_version).grid(row=7,column=0,columnspan=2,sticky="w",pady=3)
+        ttk.Button(updates,text="Clear Skipped Version",command=self.clear_skipped_version).grid(row=7,column=0,sticky="w",pady=3)
+        ttk.Button(updates,text="Repair Update Settings",command=self.repair_update_settings).grid(row=7,column=1,sticky="w",pady=3)
+        ttk.Button(updates,text="Update Diagnostics",command=self.show_update_diagnostics).grid(row=7,column=2,columnspan=2,sticky="w",pady=3)
         actions = ttk.Frame(frame)
         actions.pack(fill="x", pady=(14, 0))
         ttk.Button(actions, text="Restore Defaults", command=self.restore_defaults).pack(side="left")
@@ -411,6 +414,7 @@ class SettingsWindow(tk.Toplevel):
         updates.channel=self.update_channel_var.get(); updates.policy=self.update_policy_var.get(); updates.automatically_check=self.update_check_var.get(); updates.automatically_download=self.update_download_var.get()
         updates.installation_kind=self.master_app.update_manager.config.updates.installation_kind
         save_config(self.master_app.config_path,self.master_app.config)
+        self.master_app.refresh_update_summary()
     def check_updates(self): self._save_update_fields(); self.master_app.check_for_updates(force=True)
     def view_release_notes(self):
         release=self.master_app.update_manager.latest
@@ -419,10 +423,27 @@ class SettingsWindow(tk.Toplevel):
     def show_about(self): messagebox.showinfo(f"About {APP_NAME}",f"{APP_NAME}\nVersion {__version__}",parent=self)
     def clear_skipped_version(self):
         self.master_app.config.updates.skipped_version=""; save_config(self.master_app.config_path,self.master_app.config); self.master_app.set_status("Skipped update version cleared.")
+        self.refresh_update_status()
     def refresh_update_status(self):
         if not hasattr(self,"latest_version_var"): return
-        release=self.master_app.update_manager.latest; self.latest_version_var.set(f"Latest Version: {release.version if release else 'Unknown'}")
-        self.last_checked_var.set(f"Last Checked: {self.master_app.config.updates.last_checked or 'Never'}")
+        snapshot=self.master_app.update_manager.snapshot()
+        self.latest_version_var.set(f"Latest Version: {snapshot['latest_version']} ({snapshot['latest_release_date']})")
+        self.last_checked_var.set(f"Last Checked: {snapshot['last_checked']} | Next Check: {snapshot['next_check']} | Error: {snapshot['last_error']}")
+
+    def show_update_diagnostics(self):
+        UpdateDiagnosticsDialog(self, self.master_app.update_manager.snapshot(), self.master_app.config, self.master_app.config_path)
+
+    def repair_update_settings(self):
+        if not messagebox.askyesno(APP_NAME, "Restore the built-in update settings and clear local update state?", parent=self): return
+        self.master_app.config.updates.provider = "github"
+        self.master_app.config.updates.owner = UPDATE_GITHUB_OWNER
+        self.master_app.config.updates.repository = UPDATE_GITHUB_REPOSITORY
+        self.master_app.config.updates.last_checked = ""
+        self.master_app.config.updates.skipped_version = ""
+        save_config(self.master_app.config_path, self.master_app.config)
+        self.master_app.set_status("Update settings repaired.")
+        self.master_app.refresh_update_summary()
+        self.refresh_update_status()
 
     def scan_profiles(self) -> None:
         before=copy.deepcopy(self.master_app.config.browser_profiles)
@@ -517,6 +538,7 @@ class WorkLauncherApp(tk.Tk):
         elif self.update_manager.due(): self.after(500, self.check_for_updates)
         update_status=consume_update_status()
         if update_status: self.after(300,lambda status=update_status:self.show_update_result(status))
+        self.after(0, self.refresh_update_summary)
 
     def _build(self) -> None:
         root = ttk.Frame(self, padding=12)
@@ -545,6 +567,15 @@ class WorkLauncherApp(tk.Tk):
         ttk.Button(ctrl_frame, text="Clear Selection", command=self.clear_selection).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Settings", command=self.open_settings).pack(fill="x", pady=(10, 2))
         ttk.Button(ctrl_frame, text="Close", command=self.destroy).pack(fill="x", pady=2)
+        update_box = ttk.LabelFrame(ctrl_frame, text="Update Status", padding=8)
+        update_box.pack(fill="x", pady=(12, 0))
+        self.update_summary_var = tk.StringVar(value="Latest version: Unknown")
+        self.update_details_var = tk.StringVar(value="Last checked: Never")
+        ttk.Label(update_box, textvariable=self.update_summary_var, wraplength=210).pack(anchor="w")
+        ttk.Label(update_box, textvariable=self.update_details_var, wraplength=210).pack(anchor="w", pady=(4, 6))
+        ttk.Button(update_box, text="Check Now", command=lambda: self.check_for_updates(force=True)).pack(fill="x", pady=1)
+        ttk.Button(update_box, text="Release Notes", command=self.open_release_notes).pack(fill="x", pady=1)
+        ttk.Button(update_box, text="Diagnostics", command=self.open_update_diagnostics).pack(fill="x", pady=1)
         self.status = tk.StringVar(value="Ready.")
         ttk.Label(root, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10, 0))
         self.bind_all("<Control-Shift-o>", lambda event: self.open_all_work_apps())
@@ -621,7 +652,7 @@ class WorkLauncherApp(tk.Tk):
         code=status.get("status","")
         messages={"update_installed":"Update installed successfully.","install_failed_previous_version_restored":"Update installation failed. The previous version was restored.",
                   "restart_failed_previous_version_restored":"The updated version could not restart. The previous version was restored and restarted.","update_failed":"The update could not be installed. Work Launcher remains available."}
-        message=messages.get(code,"The previous update attempt did not complete."); self.set_status(message)
+        message=messages.get(code,"The previous update attempt did not complete."); self.set_status(message); self.refresh_update_summary()
         (messagebox.showinfo if code=="update_installed" else messagebox.showwarning)(APP_NAME,message,parent=self)
 
     def check_for_updates(self, force: bool = False) -> None:
@@ -637,13 +668,37 @@ class WorkLauncherApp(tk.Tk):
             return
         for child in self.winfo_children():
             if isinstance(child,SettingsWindow): child.refresh_update_status()
-        if kind=="error": self.set_status(str(value)); return
-        if value is None: self.set_status(f"Work Launcher {__version__} is up to date."); return
+        if kind=="error":
+            self.set_status(str(value))
+            self.refresh_update_summary()
+            return
+        if value is None:
+            self.set_status(f"Work Launcher {__version__} is up to date.")
+            self.refresh_update_summary()
+            return
         self.set_status(f"Version {value.version} is available.")
+        self.refresh_update_summary()
         if value.mandatory or value.version != self.config.updates.skipped_version:
             dialog=UpdateDialog(self,value,self.config,self.config_path)
             if self.config.updates.policy=="automatic": dialog.after(200,lambda:dialog.download(True))
             elif self.config.updates.automatically_download: dialog.after(200,lambda:dialog.download(False))
+
+    def refresh_update_summary(self) -> None:
+        if not hasattr(self, "update_summary_var"):
+            return
+        snapshot = self.update_manager.snapshot()
+        self.update_summary_var.set(f"Latest version: {snapshot['latest_version']} ({snapshot['channel']}, {snapshot['policy']})")
+        self.update_details_var.set(f"Last checked: {snapshot['last_checked']} | Next check: {snapshot['next_check']} | Error: {snapshot['last_error']}")
+
+    def open_release_notes(self) -> None:
+        release = self.update_manager.latest
+        if release:
+            UpdateDialog(self, release, self.config, self.config_path)
+            return
+        messagebox.showinfo(APP_NAME, "Check for updates first. No newer release is currently loaded.", parent=self)
+
+    def open_update_diagnostics(self) -> None:
+        UpdateDiagnosticsDialog(self, self.update_manager.snapshot(), self.config, self.config_path)
 
     def open_single(self, website: WebsiteConfig) -> None:
         result = self.launcher.open_website(website)
