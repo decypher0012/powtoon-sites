@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .config import AppConfig, WebsiteConfig, get_config_path, load_config, save_config
-from .constants import APP_NAME, DEFAULT_MIN_WINDOW_HEIGHT, DEFAULT_MIN_WINDOW_WIDTH, UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY
+from .constants import APP_NAME, DEFAULT_MIN_WINDOW_HEIGHT, DEFAULT_MIN_WINDOW_WIDTH, UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY, VISUAL_STYLES
 from .launcher import WebsiteLauncher
 from .logging_config import configure_logging
 from .settings import reset_to_defaults, save_settings
@@ -30,6 +30,7 @@ from .setup_service import should_run_setup
 from .update_manager import UpdateManager
 from .update_diagnostics import UpdateDiagnosticsDialog
 from .update_ui import UpdateDialog
+from .ui_style import apply_visual_style, style_canvas, style_listbox, style_text
 from .version import __version__
 from .update_status import consume_update_status
 from .update_download import cleanup_stale_updates
@@ -45,20 +46,20 @@ class WebsiteDialog(tk.Toplevel):
         self.group_var = tk.StringVar(value=website.launch_group)
         self.profile_names = {profile.name: key for key, profile in profiles.items()}
         current = profiles.get(website.browser_profile); self.profile_var = tk.StringVar(value=current.name if current else "")
-        frame = ttk.Frame(self, padding=14); frame.pack(fill="both", expand=True)
+        frame = ttk.Frame(self, padding=14, style="Card.TFrame"); frame.pack(fill="both", expand=True)
         fields = (("Display Name", ttk.Entry(frame, textvariable=self.name_var, width=52)),
                   ("URL", ttk.Entry(frame, textvariable=self.url_var, width=52)),
                   ("Browser Profile", ttk.Combobox(frame, textvariable=self.profile_var, values=list(self.profile_names), state="readonly", width=49)),
                   ("Launch Group (Optional)", ttk.Combobox(frame, textvariable=self.group_var,
                     values=["", "Daily Work", "Morning", "Meetings", "Admin", "Google", "HubSpot", "Custom"], width=49)))
         for row, (label, widget) in enumerate(fields):
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
+            ttk.Label(frame, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
         ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=4, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Selected by Default", variable=self.selected_var).grid(row=5, column=1, sticky="w")
-        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, foreground="#b00020", wraplength=420).grid(row=6, column=0, columnspan=2, sticky="w", pady=6)
+        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, foreground="#b00020", wraplength=420, style="Card.TLabel").grid(row=6, column=0, columnspan=2, sticky="w", pady=6)
         buttons = ttk.Frame(frame); buttons.grid(row=7, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=3)
-        ttk.Button(buttons, text="Save", command=self.accept).pack(side="right", padx=3)
+        ttk.Button(buttons, text="Save", command=self.accept, style="Primary.TButton").pack(side="right", padx=3)
         self.bind("<Escape>", lambda event: self.destroy()); self.bind("<Return>", lambda event: self.accept())
         fields[0][1].focus_set(); self.wait_visibility()
 
@@ -89,10 +90,11 @@ class SettingsWindow(tk.Toplevel):
         self.undo_history = UndoHistory()
         self.visible_indices: list[int] = []
         self.bind("<Escape>", lambda event: self.destroy())
+        self._palette = self.master_app.palette
         self._build()
 
     def _build(self) -> None:
-        canvas=tk.Canvas(self,highlightthickness=0); scrollbar=ttk.Scrollbar(self,orient="vertical",command=canvas.yview); canvas.configure(yscrollcommand=scrollbar.set)
+        canvas=tk.Canvas(self,highlightthickness=0); style_canvas(canvas, self._palette); scrollbar=ttk.Scrollbar(self,orient="vertical",command=canvas.yview); canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right",fill="y"); canvas.pack(side="left",fill="both",expand=True)
         frame=ttk.Frame(canvas,padding=12); window=canvas.create_window((0,0),window=frame,anchor="nw")
         frame.bind("<Configure>",lambda event:canvas.configure(scrollregion=canvas.bbox("all")))
@@ -104,6 +106,7 @@ class SettingsWindow(tk.Toplevel):
         list_frame = ttk.Frame(frame)
         list_frame.pack(fill="both", expand=True, pady=(10, 10))
         self.listbox = tk.Listbox(list_frame, height=12, selectmode="extended")
+        style_listbox(self.listbox, self._palette)
         self.listbox.pack(side="left", fill="both", expand=True)
         btns = ttk.Frame(list_frame)
         btns.pack(side="left", fill="y", padx=(10, 0))
@@ -126,6 +129,7 @@ class SettingsWindow(tk.Toplevel):
         profiles = ttk.LabelFrame(frame, text="Browser Profiles", padding=8)
         profiles.pack(fill="x", pady=(0, 10))
         self.profile_list = tk.Listbox(profiles, height=4)
+        style_listbox(self.profile_list, self._palette)
         self.profile_list.pack(side="left", fill="x", expand=True)
         self.profile_list.bind("<<ListboxSelect>>", self.on_profile_selected)
         profile_buttons = ttk.Frame(profiles)
@@ -148,8 +152,11 @@ class SettingsWindow(tk.Toplevel):
         ttk.Label(form, text="Duplicate cooldown seconds").grid(row=1, column=0, sticky="w")
         ttk.Entry(form, textvariable=self.cooldown_var, width=12).grid(row=1, column=1, sticky="w")
         self.theme_var = tk.StringVar(value=self.master_app.config.settings.theme)
+        self.visual_style_var = tk.StringVar(value=self.master_app.config.settings.visual_style)
         ttk.Label(form, text="Theme").grid(row=2, column=0, sticky="w")
         ttk.Combobox(form, textvariable=self.theme_var, values=["system", "light", "dark"], state="readonly", width=10).grid(row=2, column=1, sticky="w")
+        ttk.Label(form, text="Visual Style").grid(row=2, column=2, sticky="w", padx=(18, 0))
+        ttk.Combobox(form, textvariable=self.visual_style_var, values=list(VISUAL_STYLES), state="readonly", width=12).grid(row=2, column=3, sticky="w")
         self.remember_var = tk.BooleanVar(value=self.master_app.config.settings.remember_window_position)
         self.startup_var = tk.BooleanVar(value=self.master_app.config.settings.launch_with_windows)
         ttk.Checkbutton(form, text="Remember window position", variable=self.remember_var).grid(row=3, column=0, columnspan=2, sticky="w")
@@ -469,7 +476,8 @@ class SettingsWindow(tk.Toplevel):
             if delay < 0 or cooldown < 0: raise ValueError("Launch delay and duplicate cooldown cannot be negative.")
             original=self.original_config; config=self.master_app.config
             general_dirty=(delay != original.settings.launch_delay_seconds or cooldown != original.settings.duplicate_launch_cooldown_seconds
-                or self.theme_var.get() != original.settings.theme or self.remember_var.get() != original.settings.remember_window_position)
+                or self.theme_var.get() != original.settings.theme or self.visual_style_var.get() != original.settings.visual_style
+                or self.remember_var.get() != original.settings.remember_window_position)
             startup_dirty=self.startup_var.get() != original.settings.launch_with_windows
             update_values=(self.update_channel_var.get(),self.update_policy_var.get(),
                            self.update_check_var.get(),self.update_download_var.get())
@@ -485,7 +493,8 @@ class SettingsWindow(tk.Toplevel):
             if changed_profiles or set(original.browser_profiles)-set(config.browser_profiles): self.dirty_sections.add("browser_profiles")
             if general_dirty:
                 config.settings.launch_delay_seconds=delay; config.settings.duplicate_launch_cooldown_seconds=cooldown
-                config.settings.theme=self.theme_var.get(); config.settings.remember_window_position=self.remember_var.get()
+                config.settings.theme=self.theme_var.get(); config.settings.visual_style=self.visual_style_var.get()
+                config.settings.remember_window_position=self.remember_var.get()
             if updates_dirty:
                 (config.updates.channel,config.updates.policy,
                  config.updates.automatically_check,config.updates.automatically_download)=update_values
@@ -502,6 +511,8 @@ class SettingsWindow(tk.Toplevel):
                     except Exception: logging.error("Could not roll back the startup entry after a settings save failure")
                 config.settings.launch_with_windows=previous_startup
                 raise
+            if hasattr(self.master_app, "apply_visual_style"):
+                self.master_app.apply_visual_style(config.settings.visual_style)
             self.master_app.refresh_ui()
             self.master_app.launcher.browser_profiles = self.master_app.config.browser_profiles
             warning=stale_profile_warning(config)
@@ -522,6 +533,7 @@ class WorkLauncherApp(tk.Tk):
         self.executable_path = Path(sys.executable)
         self.log_path = configure_logging()
         self.config, warnings = load_config(self.config_path)
+        self.palette = apply_visual_style(self, self.config.settings.visual_style)
         cleanup_stale_updates()
         logging.info("Starting %s version %s", APP_NAME, __version__)
         self.launcher = WebsiteLauncher(browser_profiles=self.config.browser_profiles)
@@ -541,10 +553,10 @@ class WorkLauncherApp(tk.Tk):
         self.after(0, self.refresh_update_summary)
 
     def _build(self) -> None:
-        root = ttk.Frame(self, padding=12)
+        root = ttk.Frame(self, padding=12, style="Card.TFrame")
         root.pack(fill="both", expand=True)
-        ttk.Label(root, text=APP_NAME, font=("Segoe UI", 16, "bold")).pack(anchor="w")
-        self.open_all_button = ttk.Button(root, text="Open All Work Apps", command=self.open_all_work_apps)
+        ttk.Label(root, text=APP_NAME, style="Header.TLabel").pack(anchor="w")
+        self.open_all_button = ttk.Button(root, text="Open All Work Apps", command=self.open_all_work_apps, style="Primary.TButton")
         self.open_all_button.pack(fill="x", pady=(10, 8))
         body = ttk.Frame(root)
         body.pack(fill="both", expand=True)
@@ -556,7 +568,7 @@ class WorkLauncherApp(tk.Tk):
         self.website_container.pack(fill="both", expand=True, pady=(6, 0))
         ctrl_frame = ttk.Frame(body)
         ctrl_frame.pack(side="right", fill="y", padx=(10, 0))
-        self.open_selected_button = ttk.Button(ctrl_frame, text="Open Selected", command=self.open_selected)
+        self.open_selected_button = ttk.Button(ctrl_frame, text="Open Selected", command=self.open_selected, style="Primary.TButton")
         self.open_selected_button.pack(fill="x", pady=2)
         ttk.Label(ctrl_frame, text="Launch Group").pack(anchor="w", pady=(8, 1))
         self.launch_group_var = tk.StringVar(value="All Websites")
@@ -565,15 +577,15 @@ class WorkLauncherApp(tk.Tk):
         ttk.Button(ctrl_frame, text="Launch Group", command=self.open_launch_group).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Select All", command=self.select_all).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Clear Selection", command=self.clear_selection).pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Settings", command=self.open_settings).pack(fill="x", pady=(10, 2))
+        ttk.Button(ctrl_frame, text="Settings", command=self.open_settings, style="Primary.TButton").pack(fill="x", pady=(10, 2))
         ttk.Button(ctrl_frame, text="Close", command=self.destroy).pack(fill="x", pady=2)
         update_box = ttk.LabelFrame(ctrl_frame, text="Update Status", padding=8)
         update_box.pack(fill="x", pady=(12, 0))
         self.update_summary_var = tk.StringVar(value="Latest version: Unknown")
         self.update_details_var = tk.StringVar(value="Last checked: Never")
         ttk.Label(update_box, textvariable=self.update_summary_var, wraplength=210).pack(anchor="w")
-        ttk.Label(update_box, textvariable=self.update_details_var, wraplength=210).pack(anchor="w", pady=(4, 6))
-        ttk.Button(update_box, text="Check Now", command=lambda: self.check_for_updates(force=True)).pack(fill="x", pady=1)
+        ttk.Label(update_box, textvariable=self.update_details_var, wraplength=210, style="Muted.TLabel").pack(anchor="w", pady=(4, 6))
+        ttk.Button(update_box, text="Check Now", command=lambda: self.check_for_updates(force=True), style="Primary.TButton").pack(fill="x", pady=1)
         ttk.Button(update_box, text="Release Notes", command=self.open_release_notes).pack(fill="x", pady=1)
         ttk.Button(update_box, text="Diagnostics", command=self.open_update_diagnostics).pack(fill="x", pady=1)
         self.status = tk.StringVar(value="Ready.")
@@ -620,6 +632,9 @@ class WorkLauncherApp(tk.Tk):
     def set_status(self, message: str) -> None:
         self.status.set(message)
         logging.info(message)
+
+    def apply_visual_style(self, preset: str | None = None) -> None:
+        self.palette = apply_visual_style(self, preset or self.config.settings.visual_style)
 
     def _selected_websites(self) -> list[WebsiteConfig]:
         selected = []

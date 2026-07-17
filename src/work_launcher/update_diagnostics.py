@@ -5,6 +5,7 @@ from tkinter import messagebox, ttk
 
 from .constants import APP_NAME, UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY
 from .config import save_config
+from .ui_style import apply_visual_style, style_text
 
 
 class UpdateDiagnosticsDialog(tk.Toplevel):
@@ -17,15 +18,17 @@ class UpdateDiagnosticsDialog(tk.Toplevel):
         self.snapshot = snapshot
         self.config = config
         self.config_path = config_path
-        frame = ttk.Frame(self, padding=14)
+        self.palette = apply_visual_style(self, config.settings.visual_style)
+        frame = ttk.Frame(self, padding=14, style="Card.TFrame")
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Update Diagnostics", font=("Segoe UI", 15, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="This view shows the active update source, the latest known release, and any recent error.").pack(anchor="w", pady=(4, 10))
+        ttk.Label(frame, text="Update Diagnostics", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="This view shows the active update source, the latest known release, and any recent error.", style="Card.TLabel").pack(anchor="w", pady=(4, 10))
 
         text = tk.Text(frame, height=20, wrap="word")
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
         text.configure(yscrollcommand=scrollbar.set)
         text.pack(side="left", fill="both", expand=True)
+        style_text(text, self.palette)
         scrollbar.pack(side="right", fill="y")
 
         lines = [
@@ -61,7 +64,7 @@ class UpdateDiagnosticsDialog(tk.Toplevel):
 
         buttons = ttk.Frame(frame)
         buttons.pack(fill="x", pady=(10, 0))
-        ttk.Button(buttons, text="Copy Summary", command=lambda: self.copy_summary(text)).pack(side="left")
+        ttk.Button(buttons, text="Copy Summary", command=lambda: self.copy_summary(text), style="Primary.TButton").pack(side="left")
         ttk.Button(buttons, text="Repair Update Settings", command=self.repair_update_settings).pack(side="left", padx=6)
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right")
 

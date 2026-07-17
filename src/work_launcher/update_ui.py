@@ -13,6 +13,7 @@ from tkinter import messagebox, ttk
 from .config import save_config
 from .update_download import download_release, updates_dir
 from .update_models import ReleaseInfo
+from .ui_style import apply_visual_style, style_text
 from .version import __version__
 
 
@@ -32,14 +33,16 @@ class UpdateDialog(tk.Toplevel):
         self.downloading = False
         self.install_after_download = True
         self.last_download_path: Path | None = None
+        self.palette = apply_visual_style(self, config.settings.visual_style)
 
-        frame = ttk.Frame(self, padding=16)
+        frame = ttk.Frame(self, padding=16, style="Card.TFrame")
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=f"Version {release.version} is available.", font=("Segoe UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(frame, text=f"Current: {__version__}\nAvailable: {release.version}\nReleased: {release.release_date}").pack(anchor="w", pady=8)
+        ttk.Label(frame, text=f"Version {release.version} is available.", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(frame, text=f"Current: {__version__}\nAvailable: {release.version}\nReleased: {release.release_date}", style="Card.TLabel").pack(anchor="w", pady=8)
         ttk.Label(frame, text="Changes:").pack(anchor="w")
         notes = tk.Text(frame, height=10, wrap="word")
         notes.pack(fill="both", expand=True)
+        style_text(notes, self.palette)
         note_lines = [f"- {note}" for note in release.release_notes] or ["No release notes provided."]
         notes.insert("1.0", "\n".join(note_lines))
         notes.configure(state="disabled")
@@ -51,7 +54,7 @@ class UpdateDialog(tk.Toplevel):
 
         buttons = ttk.Frame(frame)
         buttons.pack(fill="x", pady=(10, 0))
-        self.download_button = ttk.Button(buttons, text="Download Update", command=self.download)
+        self.download_button = ttk.Button(buttons, text="Download Update", command=self.download, style="Primary.TButton")
         self.download_button.pack(side="left")
         self.cancel_button = ttk.Button(buttons, text="Cancel Download", command=self.cancel_download, state="disabled")
         self.cancel_button.pack(side="left", padx=5)

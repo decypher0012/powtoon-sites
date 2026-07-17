@@ -15,9 +15,10 @@ from .constants import (
     DEFAULT_DUPLICATE_LAUNCH_COOLDOWN_SECONDS,
     DEFAULT_LAUNCH_DELAY_SECONDS,
     DEFAULT_THEME,
+    DEFAULT_VISUAL_STYLE,
     DEFAULT_WEBSITES,
     DEFAULT_BROWSER_PROFILES, CONFIG_VERSION, WORK_PROFILE_ID,
-    UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY,
+    UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY, VISUAL_STYLES,
 )
 from .browser_profiles import BrowserProfile, BrowserProfileError, validate_profile
 
@@ -38,6 +39,7 @@ class AppSettings:
     launch_delay_seconds: float = DEFAULT_LAUNCH_DELAY_SECONDS
     duplicate_launch_cooldown_seconds: float = DEFAULT_DUPLICATE_LAUNCH_COOLDOWN_SECONDS
     theme: str = DEFAULT_THEME
+    visual_style: str = DEFAULT_VISUAL_STYLE
     remember_window_position: bool = True
     minimize_to_tray: bool = False
     launch_with_windows: bool = False
@@ -118,6 +120,8 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
     settings.extra={key:value for key,value in data.items() if key not in known}
     if settings.theme not in {"system", "light", "dark"}:
         raise ConfigError("settings.theme must be one of: system, light, dark")
+    if settings.visual_style not in VISUAL_STYLES:
+        raise ConfigError(f"settings.visual_style must be one of: {', '.join(VISUAL_STYLES)}")
     if not isinstance(settings.launch_delay_seconds,(int,float)) or isinstance(settings.launch_delay_seconds,bool): raise ConfigError("settings.launch_delay_seconds must be numeric")
     if not isinstance(settings.duplicate_launch_cooldown_seconds,(int,float)) or isinstance(settings.duplicate_launch_cooldown_seconds,bool): raise ConfigError("settings.duplicate_launch_cooldown_seconds must be numeric")
     if settings.launch_delay_seconds < 0:
