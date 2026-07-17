@@ -154,7 +154,6 @@ class SettingsWindow(tk.Toplevel):
         ttk.Checkbutton(form, text="Remember window position", variable=self.remember_var).grid(row=3, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(form, text="Launch Work Launcher when Windows starts", variable=self.startup_var).grid(row=4, column=0, columnspan=2, sticky="w")
         updates = ttk.LabelFrame(frame, text="Updates", padding=8); updates.pack(fill="x", pady=(8, 0))
-        self.update_owner_var=tk.StringVar(value=self.master_app.config.updates.owner); self.update_repo_var=tk.StringVar(value=self.master_app.config.updates.repository)
         self.update_channel_var=tk.StringVar(value=self.master_app.config.updates.channel); self.update_policy_var=tk.StringVar(value=self.master_app.config.updates.policy)
         self.update_install_var=tk.StringVar(value=self.master_app.config.updates.installation_kind)
         self.update_check_var=tk.BooleanVar(value=self.master_app.config.updates.automatically_check); self.update_download_var=tk.BooleanVar(value=self.master_app.config.updates.automatically_download)
@@ -162,8 +161,6 @@ class SettingsWindow(tk.Toplevel):
         self.latest_version_var=tk.StringVar(); self.last_checked_var=tk.StringVar(); self.refresh_update_status()
         ttk.Label(updates,textvariable=self.latest_version_var).grid(row=0,column=2,columnspan=2,sticky="w")
         ttk.Label(updates,textvariable=self.last_checked_var).grid(row=1,column=0,columnspan=4,sticky="w")
-        ttk.Label(updates,text="GitHub Owner").grid(row=2,column=0,sticky="w"); ttk.Entry(updates,textvariable=self.update_owner_var,width=20).grid(row=2,column=1,sticky="w")
-        ttk.Label(updates,text="Repository").grid(row=2,column=2,sticky="w"); ttk.Entry(updates,textvariable=self.update_repo_var,width=20).grid(row=2,column=3,sticky="w")
         ttk.Label(updates,text="Channel").grid(row=3,column=0,sticky="w"); ttk.Combobox(updates,textvariable=self.update_channel_var,values=["stable","beta"],state="readonly",width=10).grid(row=3,column=1,sticky="w")
         ttk.Label(updates,text="Policy").grid(row=3,column=2,sticky="w"); ttk.Combobox(updates,textvariable=self.update_policy_var,values=["notify","automatic","manual"],state="readonly",width=12).grid(row=3,column=3,sticky="w")
         ttk.Label(updates,text="Installation Type").grid(row=4,column=0,sticky="w"); ttk.Label(updates,textvariable=self.update_install_var).grid(row=4,column=1,sticky="w")
@@ -410,7 +407,7 @@ class SettingsWindow(tk.Toplevel):
             messagebox.showerror(APP_NAME, f"Browser profile test failed: {exc}", parent=self)
 
     def _save_update_fields(self):
-        updates=self.master_app.config.updates; updates.owner=self.update_owner_var.get().strip(); updates.repository=self.update_repo_var.get().strip()
+        updates=self.master_app.config.updates
         updates.channel=self.update_channel_var.get(); updates.policy=self.update_policy_var.get(); updates.automatically_check=self.update_check_var.get(); updates.automatically_download=self.update_download_var.get()
         updates.installation_kind=self.master_app.update_manager.config.updates.installation_kind
         save_config(self.master_app.config_path,self.master_app.config)
@@ -453,9 +450,9 @@ class SettingsWindow(tk.Toplevel):
             general_dirty=(delay != original.settings.launch_delay_seconds or cooldown != original.settings.duplicate_launch_cooldown_seconds
                 or self.theme_var.get() != original.settings.theme or self.remember_var.get() != original.settings.remember_window_position)
             startup_dirty=self.startup_var.get() != original.settings.launch_with_windows
-            update_values=(self.update_owner_var.get().strip(),self.update_repo_var.get().strip(),self.update_channel_var.get(),self.update_policy_var.get(),
+            update_values=(self.update_channel_var.get(),self.update_policy_var.get(),
                            self.update_check_var.get(),self.update_download_var.get())
-            original_updates=(original.updates.owner,original.updates.repository,original.updates.channel,original.updates.policy,
+            original_updates=(original.updates.channel,original.updates.policy,
                               original.updates.automatically_check,original.updates.automatically_download)
             updates_dirty=update_values != original_updates
             changed_profiles=[key for key,profile in config.browser_profiles.items()
@@ -469,7 +466,7 @@ class SettingsWindow(tk.Toplevel):
                 config.settings.launch_delay_seconds=delay; config.settings.duplicate_launch_cooldown_seconds=cooldown
                 config.settings.theme=self.theme_var.get(); config.settings.remember_window_position=self.remember_var.get()
             if updates_dirty:
-                (config.updates.owner,config.updates.repository,config.updates.channel,config.updates.policy,
+                (config.updates.channel,config.updates.policy,
                  config.updates.automatically_check,config.updates.automatically_download)=update_values
             previous_startup=config.settings.launch_with_windows
             if startup_dirty:

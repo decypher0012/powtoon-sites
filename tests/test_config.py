@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from work_launcher.config import config_to_dict, default_config, load_config, save_config, validate_config_data
+from work_launcher.constants import CONFIG_VERSION
 
 
 class ConfigTests(unittest.TestCase):
@@ -29,8 +30,18 @@ class ConfigTests(unittest.TestCase):
             path = Path(tmp) / "config.json"
             config, warnings = load_config(path)
             self.assertEqual(len(config.websites), 6)
+            self.assertEqual(config.updates.owner, "decypher0012")
+            self.assertEqual(config.updates.repository, "powtoon-sites")
             self.assertTrue(path.exists())
             self.assertTrue(warnings)
+
+    def test_release_repository_is_built_in_and_repairs_old_values(self):
+        raw = config_to_dict(default_config())
+        raw["updates"]["owner"] = ""
+        raw["updates"]["repository"] = ""
+        config = validate_config_data(raw)
+        self.assertEqual(config.updates.owner, "decypher0012")
+        self.assertEqual(config.updates.repository, "powtoon-sites")
 
     def test_invalid_json_handling(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -64,7 +75,7 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(loaded.websites[1].selected)
 
     def test_migration_from_every_prior_version_is_idempotent_and_preserves_data(self):
-        for version in (1, 2, 3):
+        for version in range(1, CONFIG_VERSION):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
                 path=Path(tmp)/"config.json"; raw=config_to_dict(default_config()); raw["config_version"]=version
                 raw["settings"]["theme"]="dark"; raw["websites"][0]["selected"]=False
@@ -72,7 +83,7 @@ class ConfigTests(unittest.TestCase):
                 if version<2: raw.pop("setup",None)
                 raw.pop("updates",None)
                 path.write_text(json.dumps(raw),encoding="utf-8"); config,warnings=load_config(path)
-                self.assertEqual(config.config_version,4); self.assertEqual(config.settings.theme,"dark"); self.assertFalse(config.websites[0].selected)
+                self.assertEqual(config.config_version,CONFIG_VERSION); self.assertEqual(config.settings.theme,"dark"); self.assertFalse(config.websites[0].selected)
                 self.assertTrue(Path(str(path)+".bak").exists()); self.assertTrue(any("migrated" in item for item in warnings))
                 _,second=load_config(path); self.assertFalse(any("migrated" in item for item in second))
 

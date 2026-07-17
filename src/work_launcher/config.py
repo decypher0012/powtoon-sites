@@ -17,6 +17,7 @@ from .constants import (
     DEFAULT_THEME,
     DEFAULT_WEBSITES,
     DEFAULT_BROWSER_PROFILES, CONFIG_VERSION, WORK_PROFILE_ID,
+    UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY,
 )
 from .browser_profiles import BrowserProfile, BrowserProfileError, validate_profile
 
@@ -56,8 +57,8 @@ class SetupConfig:
 @dataclass
 class UpdateConfig:
     provider: str = "github"
-    owner: str = ""
-    repository: str = ""
+    owner: str = UPDATE_GITHUB_OWNER
+    repository: str = UPDATE_GITHUB_REPOSITORY
     channel: str = "stable"
     policy: str = "notify"
     automatically_check: bool = True
@@ -202,6 +203,10 @@ def validate_config_data(data: Any) -> AppConfig:
         updates.extra={key:value for key,value in updates_data.items() if key not in known_updates}
     else: raise ConfigError("updates must be an object")
     if updates.provider!="github" or not isinstance(updates.owner,str) or not isinstance(updates.repository,str): raise ConfigError("updates provider/owner/repository are invalid")
+    # The release source is part of the application, not a user preference.
+    # This also repairs older installations whose update fields were left blank.
+    updates.owner = UPDATE_GITHUB_OWNER
+    updates.repository = UPDATE_GITHUB_REPOSITORY
     if type(updates.automatically_check) is not bool or type(updates.automatically_download) is not bool: raise ConfigError("update automation settings must be true or false")
     if not isinstance(updates.last_checked,str) or not isinstance(updates.skipped_version,str): raise ConfigError("update status fields must be text")
     if updates.channel not in {"stable", "beta"}: raise ConfigError("updates.channel must be stable or beta")

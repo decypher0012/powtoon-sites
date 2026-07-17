@@ -22,7 +22,7 @@ def settings_window(config, path, executable):
         launcher=SimpleNamespace(browser_profiles=config.browser_profiles),set_status=Mock())
     window.delay_var=Var(str(config.settings.launch_delay_seconds));window.cooldown_var=Var(str(config.settings.duplicate_launch_cooldown_seconds))
     window.theme_var=Var(config.settings.theme);window.remember_var=Var(config.settings.remember_window_position);window.startup_var=Var(config.settings.launch_with_windows)
-    window.update_owner_var=Var(config.updates.owner);window.update_repo_var=Var(config.updates.repository);window.update_channel_var=Var(config.updates.channel)
+    window.update_channel_var=Var(config.updates.channel)
     window.update_policy_var=Var(config.updates.policy);window.update_check_var=Var(config.updates.automatically_check);window.update_download_var=Var(config.updates.automatically_download)
     return window
 
