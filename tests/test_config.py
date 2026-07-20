@@ -13,12 +13,21 @@ class ConfigTests(unittest.TestCase):
         config = default_config()
         self.assertEqual(config.websites, [])
         self.assertEqual(config.presets, [])
+        self.assertEqual((config.settings.window_width, config.settings.window_height), (1080, 760))
+        self.assertFalse(config.settings.window_maximized)
         self.assertNotEqual(config.browser_profiles["chrome-work"].profile_directory,"Profile 4")
         self.assertEqual(config.browser_profiles["chrome-work"].type,"system")
         example=json.loads((Path(__file__).parents[1]/"config.example.json").read_text(encoding="utf-8"))
         self.assertEqual(example["websites"], [])
         self.assertEqual(example["presets"], [])
         self.assertFalse(any(profile.get("profile_directory")=="Profile 4" for profile in example["browser_profiles"].values()))
+        self.assertFalse(example["settings"]["window_maximized"])
+
+    def test_window_maximized_setting_round_trips(self):
+        raw = config_to_dict(default_config())
+        raw["settings"]["window_maximized"] = True
+        config = validate_config_data(raw)
+        self.assertTrue(config.settings.window_maximized)
 
     def test_defaults_contain_no_company_specific_urls(self):
         serialized = json.dumps(config_to_dict(default_config())["websites"]).casefold()

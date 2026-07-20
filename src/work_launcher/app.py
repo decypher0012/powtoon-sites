@@ -581,55 +581,129 @@ class WorkLauncherApp(tk.Tk):
             self.after(0, self._ensure_tray)
 
     def _build(self) -> None:
-        root = ttk.Frame(self, padding=12, style="Card.TFrame")
-        root.pack(fill="both", expand=True)
-        ttk.Label(root, text=APP_NAME, style="Header.TLabel").pack(anchor="w")
-        self.open_all_button = ttk.Button(root, text="Open All Work Apps", command=self.open_all_work_apps, style="Primary.TButton")
-        self.open_all_button.pack(fill="x", pady=(10, 8))
-        body = ttk.Frame(root)
-        body.pack(fill="both", expand=True)
-        self.website_vars: list[tk.BooleanVar] = []
-        list_frame = ttk.Frame(body)
-        list_frame.pack(side="left", fill="both", expand=True)
-        ttk.Label(list_frame, text="Websites").pack(anchor="w")
-        self.website_container = ttk.Frame(list_frame)
-        self.website_container.pack(fill="both", expand=True, pady=(6, 0))
-        ctrl_frame = ttk.Frame(body)
-        ctrl_frame.pack(side="right", fill="y", padx=(10, 0))
-        self.open_selected_button = ttk.Button(ctrl_frame, text="Open Selected", command=self.open_selected, style="Primary.TButton")
-        self.open_selected_button.pack(fill="x", pady=2)
-        ttk.Label(ctrl_frame, text="Launch Group").pack(anchor="w", pady=(8, 1))
-        self.launch_group_var = tk.StringVar(value="All Websites")
-        self.launch_group_combo = ttk.Combobox(ctrl_frame, textvariable=self.launch_group_var, state="readonly", width=20)
-        self.launch_group_combo.pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Launch Group", command=self.open_launch_group).pack(fill="x", pady=2)
-        ttk.Label(ctrl_frame, text="Workspace Preset").pack(anchor="w", pady=(8, 1))
-        self.preset_var = tk.StringVar()
-        self.preset_combo = ttk.Combobox(ctrl_frame, textvariable=self.preset_var, state="readonly", width=20)
-        self.preset_combo.pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Launch Preset", command=self.launch_selected_preset).pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Manage Workspaces", command=self.open_workspace_manager).pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Select All", command=self.select_all).pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Clear Selection", command=self.clear_selection).pack(fill="x", pady=2)
-        ttk.Button(ctrl_frame, text="Settings", command=self.open_settings, style="Primary.TButton").pack(fill="x", pady=(10, 2))
-        ttk.Button(ctrl_frame, text="Close", command=self.on_close).pack(fill="x", pady=2)
-        update_box = ttk.LabelFrame(ctrl_frame, text="Update Status", padding=8)
-        update_box.pack(fill="x", pady=(12, 0))
-        self.update_summary_var = tk.StringVar(value="Latest version: Unknown")
+        self.shell = ttk.Frame(self)
+        self.shell.pack(fill="both", expand=True)
+        self.dashboard = ttk.Frame(self.shell, padding=20, style="Card.TFrame")
+        self.shell.bind("<Configure>", self._resize_dashboard)
+
+        header = ttk.Frame(self.dashboard, style="Card.TFrame")
+        header.pack(fill="x")
+        title_box = ttk.Frame(header, style="Card.TFrame")
+        title_box.pack(side="left", fill="x", expand=True)
+        ttk.Label(title_box, text=APP_NAME, style="DashboardHeader.TLabel").pack(anchor="w")
+        ttk.Label(
+            title_box,
+            text="Launch your websites, groups, and workspace presets.",
+            style="DashboardSubtitle.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
+        header_actions = ttk.Frame(header, style="Card.TFrame")
+        header_actions.pack(side="right")
+        self.update_summary_var = tk.StringVar(value="Updates: not checked")
         self.update_details_var = tk.StringVar(value="Last checked: Never")
-        ttk.Label(update_box, textvariable=self.update_summary_var, wraplength=210).pack(anchor="w")
-        ttk.Label(update_box, textvariable=self.update_details_var, wraplength=210, style="Muted.TLabel").pack(anchor="w", pady=(4, 6))
-        ttk.Button(update_box, text="Check Now", command=lambda: self.check_for_updates(force=True), style="Primary.TButton").pack(fill="x", pady=1)
-        ttk.Button(update_box, text="Release Notes", command=self.open_release_notes).pack(fill="x", pady=1)
-        ttk.Button(update_box, text="Diagnostics", command=self.open_update_diagnostics).pack(fill="x", pady=1)
+        ttk.Button(
+            header_actions,
+            textvariable=self.update_summary_var,
+            command=self.open_update_diagnostics,
+            style="Update.TButton",
+        ).pack(side="left", padx=(0, 4))
+        tools = ttk.Menubutton(header_actions, text="Tools ▾", style="Secondary.TButton")
+        tools_menu = tk.Menu(tools, tearoff=False)
+        tools_menu.add_command(label="Manage Workspaces", command=self.open_workspace_manager)
+        tools_menu.add_command(label="Check Website Health", command=self.check_website_health)
+        tools_menu.add_command(label="Check for Updates", command=lambda: self.check_for_updates(force=True))
+        tools_menu.add_command(label="Release Notes", command=self.open_release_notes)
+        tools_menu.add_command(label="Update Diagnostics", command=self.open_update_diagnostics)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Settings", command=self.open_settings)
+        tools_menu.add_command(label="Close", command=self.on_close)
+        tools.configure(menu=tools_menu)
+        tools.pack(side="left")
+
+        toolbar = ttk.Frame(self.dashboard, padding=(0, 18, 0, 14), style="Card.TFrame")
+        toolbar.pack(fill="x")
+        self.open_selected_button = ttk.Button(
+            toolbar, text="Open Selected", command=self.open_selected, style="Primary.TButton"
+        )
+        self.open_selected_button.pack(side="left")
+        self.open_all_button = ttk.Button(
+            toolbar, text="Open All", command=self.open_all_work_apps, style="Secondary.TButton"
+        )
+        self.open_all_button.pack(side="left", padx=(8, 18))
+
+        self.launch_group_var = tk.StringVar(value="All Websites")
+        ttk.Label(toolbar, text="Group", style="Card.TLabel").pack(side="left", padx=(0, 5))
+        self.launch_group_combo = ttk.Combobox(
+            toolbar, textvariable=self.launch_group_var, state="readonly", width=18
+        )
+        self.launch_group_combo.pack(side="left")
+        self.launch_group_button = ttk.Button(
+            toolbar, text="Launch", command=self.open_launch_group, style="Compact.TButton"
+        )
+        self.launch_group_button.pack(side="left", padx=(5, 18))
+
+        self.preset_var = tk.StringVar()
+        ttk.Label(toolbar, text="Preset", style="Card.TLabel").pack(side="left", padx=(0, 5))
+        self.preset_combo = ttk.Combobox(toolbar, textvariable=self.preset_var, state="readonly", width=18)
+        self.preset_combo.pack(side="left")
+        self.launch_preset_button = ttk.Button(
+            toolbar, text="Launch", command=self.launch_selected_preset, style="Compact.TButton"
+        )
+        self.launch_preset_button.pack(side="left", padx=(5, 0))
+
+        self.website_vars: list[tk.BooleanVar] = []
+        list_card = ttk.Frame(self.dashboard, padding=14, style="Row.TFrame")
+        list_card.pack(fill="both", expand=True)
+        list_header = ttk.Frame(list_card, style="Card.TFrame")
+        list_header.pack(fill="x", pady=(0, 10))
+        ttk.Label(list_header, text="Websites", style="CardSection.TLabel").pack(side="left")
+        self.selection_summary_var = tk.StringVar(value="0 selected")
+        ttk.Label(list_header, textvariable=self.selection_summary_var, style="DashboardSubtitle.TLabel").pack(side="left", padx=10)
+        ttk.Button(list_header, text="+ Add", command=self.add_first_website, style="Compact.TButton").pack(side="right")
+        ttk.Button(list_header, text="Manage", command=self.open_settings, style="Compact.TButton").pack(side="right", padx=5)
+        ttk.Button(list_header, text="Clear", command=self.clear_selection, style="Compact.TButton").pack(side="right")
+        ttk.Button(list_header, text="Select all", command=self.select_all, style="Compact.TButton").pack(side="right", padx=5)
+
+        scroll_host = ttk.Frame(list_card, style="Card.TFrame")
+        scroll_host.pack(fill="both", expand=True)
+        self.website_canvas = tk.Canvas(scroll_host, highlightthickness=0, bd=0, bg=self.palette["card"])
+        website_scrollbar = ttk.Scrollbar(scroll_host, orient="vertical", command=self.website_canvas.yview)
+        self.website_canvas.configure(yscrollcommand=website_scrollbar.set)
+        website_scrollbar.pack(side="right", fill="y")
+        self.website_canvas.pack(side="left", fill="both", expand=True)
+        self.website_container = ttk.Frame(self.website_canvas, style="Card.TFrame")
+        self.website_window = self.website_canvas.create_window((0, 0), window=self.website_container, anchor="nw")
+        self.website_container.bind(
+            "<Configure>",
+            lambda _event: self.website_canvas.configure(scrollregion=self.website_canvas.bbox("all")),
+        )
+        self.website_canvas.bind(
+            "<Configure>",
+            lambda event: self.website_canvas.itemconfigure(self.website_window, width=event.width),
+        )
+        self.website_canvas.bind("<Enter>", lambda _event: self.bind_all("<MouseWheel>", self._scroll_websites))
+        self.website_canvas.bind("<Leave>", lambda _event: self.unbind_all("<MouseWheel>"))
+
+        footer = ttk.Frame(self.dashboard, padding=(0, 12, 0, 0), style="Card.TFrame")
+        footer.pack(fill="x")
         self.status = tk.StringVar(value="Ready.")
-        ttk.Label(root, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10, 0))
+        ttk.Label(footer, textvariable=self.status, style="Footer.TLabel").pack(side="left", fill="x", expand=True)
+        ttk.Label(footer, text=f"Version {__version__}", style="Footer.TLabel").pack(side="right")
+        ttk.Label(footer, text="Ctrl+K commands", style="Footer.TLabel").pack(side="right", padx=14)
         self.bind_all("<Control-Shift-o>", lambda event: self.open_all_work_apps())
         self.bind_all("<Control-Return>", lambda event: self.open_selected())
         self.bind_all("<Control-comma>", lambda event: self.open_settings())
         self.bind_all("<Escape>", lambda event: self._escape_handler())
         self.bind_all("<Control-a>", lambda event: self.select_all())
         self.bind_all("<Control-k>", lambda event: self.open_command_palette())
+
+    def _resize_dashboard(self, event) -> None:
+        margin = 20 if event.width >= 900 else 10
+        width = min(max(event.width - (margin * 2), 860), 1100)
+        height = max(event.height - (margin * 2), 560)
+        self.dashboard.place(x=event.width // 2, y=margin, anchor="n", width=width, height=height)
+
+    def _scroll_websites(self, event) -> None:
+        self.website_canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def _escape_handler(self) -> None:
         if self.winfo_exists():
@@ -640,35 +714,83 @@ class WorkLauncherApp(tk.Tk):
             child.destroy()
         self.website_vars.clear()
         if not self.config.websites:
-            empty = ttk.Frame(self.website_container, padding=24, style="Card.TFrame")
+            empty = ttk.Frame(self.website_container, padding=36, style="Card.TFrame")
             empty.pack(fill="both", expand=True)
-            ttk.Label(empty, text="No websites configured yet.", style="Header.TLabel").pack(pady=(20, 8))
+            ttk.Label(empty, text="No websites configured", style="DashboardHeader.TLabel").pack(pady=(28, 8))
             ttk.Label(
                 empty,
-                text="Add your first website or import websites from a Work Launcher configuration file.",
-                style="Card.TLabel",
+                text="Add your first website or import an existing Work Launcher configuration.",
+                style="DashboardSubtitle.TLabel",
                 wraplength=460,
             ).pack(pady=(0, 16))
-            actions = ttk.Frame(empty)
+            actions = ttk.Frame(empty, style="Card.TFrame")
             actions.pack()
             ttk.Button(actions, text="Add Website", command=self.add_first_website,
                        style="Primary.TButton").pack(side="left", padx=4)
-            ttk.Button(actions, text="Import Configuration", command=self.import_configuration).pack(side="left", padx=4)
+            ttk.Button(actions, text="Import Configuration", command=self.import_configuration,
+                       style="Secondary.TButton").pack(side="left", padx=4)
         for site in self.config.websites:
-            row = ttk.Frame(self.website_container)
-            row.pack(fill="x", pady=2)
+            row = ttk.Frame(self.website_container, padding=(12, 9), style="Row.TFrame")
+            row.pack(fill="x", pady=(0, 7))
             var = tk.BooleanVar(value=site.selected)
             self.website_vars.append(var)
-            ttk.Checkbutton(row, text=site.name, variable=var).pack(side="left", fill="x", expand=True)
-            ttk.Button(row, text=f"Open {site.name}", command=lambda s=site: self.open_single(s)).pack(side="right")
+            ttk.Checkbutton(
+                row, variable=var, command=self._selection_changed, style="Card.TCheckbutton"
+            ).pack(side="left", padx=(0, 8))
+            details = ttk.Frame(row, style="Card.TFrame")
+            details.pack(side="left", fill="x", expand=True)
+            ttk.Label(details, text=site.name, style="RowTitle.TLabel").pack(anchor="w")
+            profile = self.config.browser_profiles.get(site.browser_profile)
+            metadata = [profile.name if profile else site.browser_profile]
+            if site.launch_group:
+                metadata.append(site.launch_group)
+            if not site.enabled:
+                metadata.append("Disabled")
+            ttk.Label(details, text="  ·  ".join(metadata), style="RowMeta.TLabel").pack(anchor="w", pady=(2, 0))
+            menu_button = ttk.Menubutton(row, text="⋯", width=3, style="Compact.TButton")
+            item_menu = tk.Menu(menu_button, tearoff=False)
+            item_menu.add_command(label="Open", command=lambda s=site: self.open_single(s))
+            item_menu.add_command(
+                label="Disable" if site.enabled else "Enable",
+                command=lambda s=site: self.toggle_website(s),
+            )
+            item_menu.add_command(label="Edit in Settings", command=self.open_settings)
+            item_menu.add_separator()
+            item_menu.add_command(label="Delete", command=lambda s=site: self.delete_website(s))
+            menu_button.configure(menu=item_menu)
+            menu_button.pack(side="right", padx=(6, 0))
+            ttk.Button(
+                row, text="Open", command=lambda s=site: self.open_single(s), style="Compact.TButton"
+            ).pack(side="right")
         groups = sorted({site.launch_group for site in self.config.websites if site.launch_group}, key=str.casefold)
         self.launch_group_combo.configure(values=["All Websites", *groups])
         if self.launch_group_var.get() not in ["All Websites", *groups]: self.launch_group_var.set("All Websites")
         has_websites = bool(self.config.websites)
         self.open_all_button.configure(state="normal" if has_websites else "disabled")
         self.open_selected_button.configure(state="normal" if has_websites else "disabled")
+        self.launch_group_button.configure(state="normal" if has_websites else "disabled")
         self.refresh_preset_controls()
+        self._selection_changed()
         self.set_status("Ready." if has_websites else "No websites configured. Add or import websites to begin.")
+
+    def _selection_changed(self) -> None:
+        selected = sum(var.get() for site, var in zip(self.config.websites, self.website_vars) if site.enabled)
+        self.selection_summary_var.set(f"{selected} selected")
+        self.open_selected_button.configure(state="normal" if selected else "disabled")
+
+    def toggle_website(self, website: WebsiteConfig) -> None:
+        website.enabled = not website.enabled
+        save_config(self.config_path, self.config)
+        self.refresh_ui()
+
+    def delete_website(self, website: WebsiteConfig) -> None:
+        if not messagebox.askyesno(APP_NAME, f'Delete "{website.name}"?', parent=self):
+            return
+        index = self.config.websites.index(website)
+        create_timestamped_backup(self.config_path)
+        delete_websites(self.config, [index])
+        save_config(self.config_path, self.config)
+        self.refresh_ui()
 
     def add_first_website(self) -> None:
         dialog = WebsiteDialog(self, "Add Website", self.config.browser_profiles)
@@ -734,6 +856,7 @@ class WorkLauncherApp(tk.Tk):
             self.preset_combo.configure(values=names)
             if self.preset_var.get() not in names:
                 self.preset_var.set(names[0] if names else "")
+            self.launch_preset_button.configure(state="normal" if names else "disabled")
         if self.tray:
             self.tray.stop()
             self.tray = None
@@ -868,16 +991,27 @@ class WorkLauncherApp(tk.Tk):
 
     def center_first_launch(self) -> None:
         self.update_idletasks()
-        width = self.config.settings.window_width
-        height = self.config.settings.window_height
-        if self.config.settings.window_x is not None and self.config.settings.window_y is not None and self.config.settings.remember_window_position:
-            self.geometry(f"{width}x{height}+{self.config.settings.window_x}+{self.config.settings.window_y}")
-            return
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        x = max((screen_w - width) // 2, 0)
-        y = max((screen_h - height) // 2, 0)
-        self.geometry(f"{width}x{height}+{x}+{y}")
+        width = min(max(self.config.settings.window_width, DEFAULT_MIN_WINDOW_WIDTH), max(screen_w - 80, DEFAULT_MIN_WINDOW_WIDTH))
+        height = min(max(self.config.settings.window_height, DEFAULT_MIN_WINDOW_HEIGHT), max(screen_h - 100, DEFAULT_MIN_WINDOW_HEIGHT))
+        if (
+            self.config.settings.window_x is not None
+            and self.config.settings.window_y is not None
+            and self.config.settings.remember_window_position
+        ):
+            saved_x = self.config.settings.window_x
+            saved_y = self.config.settings.window_y
+            if saved_x < screen_w - 80 and saved_y < screen_h - 80 and saved_x + width > 80 and saved_y + height > 80:
+                self.geometry(f"{width}x{height}+{saved_x}+{saved_y}")
+            else:
+                self.geometry(f"{width}x{height}+{max((screen_w - width) // 2, 0)}+{max((screen_h - height) // 2, 0)}")
+        else:
+            x = max((screen_w - width) // 2, 0)
+            y = max((screen_h - height) // 2, 0)
+            self.geometry(f"{width}x{height}+{x}+{y}")
+        if self.config.settings.window_maximized:
+            self.after_idle(lambda: self.state("zoomed"))
 
     def set_status(self, message: str) -> None:
         self.status.set(message)
@@ -896,15 +1030,17 @@ class WorkLauncherApp(tk.Tk):
         return selected
 
     def select_all(self) -> None:
-        for var in self.website_vars:
-            var.set(True)
+        for site, var in zip(self.config.websites, self.website_vars):
+            var.set(site.enabled)
         self._selected_websites()
+        self._selection_changed()
         self.set_status("All websites selected.")
 
     def clear_selection(self) -> None:
         for var in self.website_vars:
             var.set(False)
         self._selected_websites()
+        self._selection_changed()
         self.set_status("Selection cleared.")
 
     def open_settings(self) -> None:
@@ -952,7 +1088,16 @@ class WorkLauncherApp(tk.Tk):
         if not hasattr(self, "update_summary_var"):
             return
         snapshot = self.update_manager.snapshot()
-        self.update_summary_var.set(f"Latest version: {snapshot['latest_version']} ({snapshot['channel']}, {snapshot['policy']})")
+        latest = snapshot["latest_version"]
+        if snapshot["last_error"] not in ("", "None", None):
+            summary = "Updates unavailable"
+        elif latest in ("", "Unknown", None):
+            summary = "Updates: not checked"
+        elif latest == __version__:
+            summary = f"✓ Up to date · v{__version__}"
+        else:
+            summary = f"Update v{latest} available"
+        self.update_summary_var.set(summary)
         self.update_details_var.set(f"Last checked: {snapshot['last_checked']} | Next check: {snapshot['next_check']} | Error: {snapshot['last_error']}")
 
     def open_release_notes(self) -> None:
@@ -970,9 +1115,12 @@ class WorkLauncherApp(tk.Tk):
         self.set_status(result.message)
 
     def _set_launch_controls(self, enabled: bool) -> None:
-        state = "normal" if enabled else "disabled"
-        self.open_all_button.configure(state=state)
-        self.open_selected_button.configure(state=state)
+        has_websites = any(site.enabled for site in self.config.websites)
+        has_selection = any(site.enabled and var.get() for site, var in zip(self.config.websites, self.website_vars))
+        self.open_all_button.configure(state="normal" if enabled and has_websites else "disabled")
+        self.open_selected_button.configure(state="normal" if enabled and has_selection else "disabled")
+        self.launch_group_button.configure(state="normal" if enabled and has_websites else "disabled")
+        self.launch_preset_button.configure(state="normal" if enabled and bool(self.config.presets) else "disabled")
 
     def open_selected(self) -> None:
         if self.is_launching:
@@ -1030,11 +1178,14 @@ class WorkLauncherApp(tk.Tk):
         self.quit_application()
 
     def _save_window_state(self) -> None:
-        self.config.settings.window_width = self.winfo_width()
-        self.config.settings.window_height = self.winfo_height()
-        if self.config.settings.remember_window_position:
-            self.config.settings.window_x = self.winfo_x()
-            self.config.settings.window_y = self.winfo_y()
+        maximized = self.state() == "zoomed"
+        self.config.settings.window_maximized = maximized
+        if not maximized:
+            self.config.settings.window_width = self.winfo_width()
+            self.config.settings.window_height = self.winfo_height()
+            if self.config.settings.remember_window_position:
+                self.config.settings.window_x = self.winfo_x()
+                self.config.settings.window_y = self.winfo_y()
         save_config(self.config_path, self.config)
 
 

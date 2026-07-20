@@ -1,4 +1,6 @@
 """Work Launcher package."""
 
-__version__ = "1.1.1"
+from .version import __version__
+
+__all__ = ["__version__"]
 

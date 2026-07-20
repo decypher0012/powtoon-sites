@@ -76,10 +76,11 @@ class AppSettings:
     remember_window_position: bool = True
     minimize_to_tray: bool = False
     launch_with_windows: bool = False
-    window_width: int = 760
-    window_height: int = 640
+    window_width: int = 1080
+    window_height: int = 760
     window_x: int | None = None
     window_y: int | None = None
+    window_maximized: bool = False
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -166,7 +167,7 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
         raise ConfigError("settings.launch_delay_seconds must be >= 0")
     if settings.duplicate_launch_cooldown_seconds < 0:
         raise ConfigError("settings.duplicate_launch_cooldown_seconds must be >= 0")
-    for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows"):
+    for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows", "window_maximized"):
         if type(getattr(settings, name)) is not bool:
             raise ConfigError(f"settings.{name} must be true or false")
     for name in ("window_width", "window_height"):

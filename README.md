@@ -2,6 +2,8 @@
 
 Work Launcher is a Windows workspace launcher for websites, local applications, documents, presets, and scheduled routines. It stores configuration at `%APPDATA%\WorkLauncher\config.json`, rotating logs at `%LOCALAPPDATA%\WorkLauncher\logs\`, and never reads or modifies browser data or credentials.
 
+The main window uses a centered dashboard with compact launch controls, scrollable website cards, per-site action menus, selection feedback, and a concise update indicator. It opens at a practical desktop size, remembers whether it was maximized, and keeps the dashboard centered on larger displays.
+
 ## Workspaces, applications, and automation
 
 Use **Manage Workspaces** to add local applications or documents, combine them with websites into ordered presets, and schedule presets by weekday and time. Executables launch with an argument list and `shell=False`; documents use their registered Windows file association. The **Workspace Preset** control runs a preset immediately and writes a bounded session report under `%LOCALAPPDATA%\WorkLauncher\Reports\`.

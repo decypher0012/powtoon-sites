@@ -8,10 +8,11 @@
     "remember_window_position": true,
     "minimize_to_tray": false,
     "launch_with_windows": false,
-    "window_width": 760,
-    "window_height": 640,
+    "window_width": 1080,
+    "window_height": 760,
     "window_x": null,
-    "window_y": null
+    "window_y": null,
+    "window_maximized": false
   },
   "setup": {"completed": false},
   "updates": {
