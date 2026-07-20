@@ -9,6 +9,7 @@ import pytest
 from work_launcher.app import SettingsWindow
 from work_launcher.browser_profiles import BrowserProfile
 from work_launcher.config import default_config
+from sample_data import populated_config
 
 
 class Var:
@@ -29,7 +30,7 @@ def settings_window(config, path, executable):
 
 
 def stale_config(referenced=False):
-    config=default_config();config.browser_profiles["chrome-work"]=BrowserProfile("Chrome Work","chrome",r"C:\Chrome\chrome.exe",r"C:\User Data","Profile 4")
+    config=populated_config();config.browser_profiles["chrome-work"]=BrowserProfile("Chrome Work","chrome",r"C:\Chrome\chrome.exe",r"C:\User Data","Profile 4")
     for site in config.websites: site.browser_profile="chrome-work" if referenced else "system-default"
     return config
 

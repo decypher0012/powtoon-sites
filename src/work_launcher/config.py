@@ -136,7 +136,7 @@ def default_config() -> AppConfig:
         settings=AppSettings(),
         browser_profiles={key: BrowserProfile(**value) for key, value in DEFAULT_BROWSER_PROFILES.items()},
         websites=websites,
-        presets=[PresetConfig("All Work Apps", [f"website:{item.name}" for item in websites])],
+        presets=[],
         setup=SetupConfig(completed=False),
         updates=UpdateConfig(),
     )

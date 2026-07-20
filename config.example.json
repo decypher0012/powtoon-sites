@@ -38,14 +38,7 @@
       "fallback_to_system_browser": false
     }
   },
-  "websites": [
-    {"name":"Renewal Tracker Admin","url":"https://www.renewals-tracker.powtoon.com/admin","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""},
-    {"name":"Gmail","url":"https://mail.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
-    {"name":"Google Calendar","url":"https://calendar.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
-    {"name":"Google Keep","url":"https://keep.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
-    {"name":"HubSpot Dashboard","url":"https://app.hubspot.com/reports-dashboard/3444711/view/10170444","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""},
-    {"name":"Powtoon Okta","url":"https://powtoon.okta.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""}
-  ],
+  "websites": [],
   "applications": [
     {
       "name": "Example Tool",
@@ -57,19 +50,6 @@
       "only_if_not_running": true
     }
   ],
-  "presets": [
-    {
-      "name": "All Work Apps",
-      "items": [
-        "website:Renewal Tracker Admin",
-        "website:Gmail",
-        "website:Google Calendar",
-        "website:Google Keep",
-        "website:HubSpot Dashboard",
-        "website:Powtoon Okta"
-      ],
-      "launch_delay_seconds": 0.5
-    }
-  ],
+  "presets": [],
   "schedules": []
 }

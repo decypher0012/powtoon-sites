@@ -27,50 +27,7 @@ DEFAULT_BROWSER_PROFILES = {
     },
 }
 
-DEFAULT_WEBSITES = [
-    {
-        "name": "Renewal Tracker Admin",
-        "url": "https://www.renewals-tracker.powtoon.com/admin",
-        "enabled": True,
-        "selected": True,
-        "browser_profile": WORK_PROFILE_ID,
-    },
-    {
-        "name": "Gmail",
-        "url": "https://mail.google.com/",
-        "enabled": True,
-        "selected": True,
-        "browser_profile": WORK_PROFILE_ID,
-    },
-    {
-        "name": "Google Calendar",
-        "url": "https://calendar.google.com/",
-        "enabled": True,
-        "selected": True,
-        "browser_profile": WORK_PROFILE_ID,
-    },
-    {
-        "name": "Google Keep",
-        "url": "https://keep.google.com/",
-        "enabled": True,
-        "selected": True,
-        "browser_profile": WORK_PROFILE_ID,
-    },
-    {
-        "name": "HubSpot Dashboard",
-        "url": "https://app.hubspot.com/reports-dashboard/3444711/view/10170444",
-        "enabled": True,
-        "selected": True,
-        "browser_profile": WORK_PROFILE_ID,
-    },
-    {
-        "name": "Powtoon Okta",
-        "url": "https://powtoon.okta.com/",
-        "enabled": True,
-        "selected": True,
-        "browser_profile": WORK_PROFILE_ID,
-    },
-]
+DEFAULT_WEBSITES = []
 
 
 def app_data_dir() -> Path:

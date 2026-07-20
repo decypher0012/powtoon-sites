@@ -7,9 +7,10 @@ from unittest.mock import Mock, patch
 from work_launcher.browser_discovery import discover_chrome
 from work_launcher.browser_launcher import BrowserLauncher, chrome_arguments
 from work_launcher.browser_profiles import BrowserProfile, BrowserProfileError, validate_profile
-from work_launcher.config import ConfigError, default_config, load_config, save_config, validate_config_data
+from work_launcher.config import ConfigError, default_config as empty_config, load_config, save_config, validate_config_data
 from work_launcher.launcher import WebsiteLauncher
 from work_launcher.settings import delete_browser_profile
+from sample_data import populated_config
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -82,7 +83,7 @@ class BrowserLaunchTests(unittest.TestCase):
         with self.assertRaises(BrowserProfileError): BrowserLauncher(discover=lambda: None).launch(profile, ["https://a.test"], ["A"])
 
     def test_open_one_selected_all_and_mixed_are_mocked(self):
-        config = default_config(); backend = Mock(); backend.launch.return_value = None
+        config = populated_config(); backend = Mock(); backend.launch.return_value = None
         launcher = WebsiteLauncher(browser_profiles=config.browser_profiles, browser_launcher=backend)
         self.assertTrue(launcher.open_website(config.websites[0]).success)
         self.assertEqual(len(launcher.open_selected(config.websites[:2])), 2)
@@ -112,16 +113,17 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), original); self.assertEqual(config.websites[0].name, "Custom")
             self.assertTrue(any("retained" in x for x in warnings))
 
-    def test_defaults_assign_all_six_to_work(self):
-        self.assertEqual([w.browser_profile for w in default_config().websites], ["chrome-work"] * 6)
+    def test_fresh_defaults_have_no_preconfigured_websites(self):
+        self.assertEqual(empty_config().websites, [])
+        self.assertEqual(empty_config().presets, [])
 
     def test_assignment_persistence_and_invalid_reference(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.json"; config = default_config(); config.websites[0].browser_profile = "system-default"
+            path = Path(tmp) / "config.json"; config = populated_config(); config.websites[0].browser_profile = "system-default"
             save_config(path, config); loaded, _ = load_config(path); self.assertEqual(loaded.websites[0].browser_profile, "system-default")
         raw = {"browser_profiles": {"system-default": {"name": "Default", "type": "system"}},
                "websites": [{"name": "X", "url": "https://x.test", "browser_profile": "missing"}]}
         with self.assertRaises(ConfigError): validate_config_data(raw)
 
     def test_delete_in_use_prevented(self):
-        with self.assertRaises(ConfigError): delete_browser_profile(default_config(), "chrome-work")
+        with self.assertRaises(ConfigError): delete_browser_profile(populated_config(), "chrome-work")

@@ -10,9 +10,10 @@ from work_launcher.browser_launcher import BrowserLauncher, firefox_arguments
 from work_launcher.browser_profiles import BrowserProfile, BrowserProfileError, validate_profile
 from work_launcher.browser_scanner import (BROWSERS, DiscoveredBrowserProfile, find_browser_executable,
     scan_browsers, scan_chromium_profiles, scan_firefox_profiles)
-from work_launcher.config import default_config, load_config
+from work_launcher.config import load_config
 from work_launcher.setup_service import (assign_all_websites, assign_websites, cancel_setup, complete_setup,
     configure_setup_profile, detected_profile_exists, import_detected_profile, should_run_setup)
+from sample_data import populated_config
 
 
 @pytest.mark.parametrize("browser_type,variable", [
@@ -109,7 +110,7 @@ def detected():
 
 
 def test_duplicate_existing_import_and_persistence():
-    config = default_config(); item = detected(); key = import_detected_profile(config, item)
+    config = populated_config(); item = detected(); key = import_detected_profile(config, item)
     assert detected_profile_exists(config, item); assert import_detected_profile(config, item) == key
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"; complete_setup(path, config); loaded, _ = load_config(path)
@@ -119,7 +120,7 @@ def test_duplicate_existing_import_and_persistence():
 def test_setup_remaps_existing_logical_work_profile_without_duplicate():
     with tempfile.TemporaryDirectory() as tmp:
         root=Path(tmp);exe=root/"chrome.exe";exe.touch();data=root/"User Data";(data/"Profile 2").mkdir(parents=True)
-        config=default_config(); original_assignments=[site.browser_profile for site in config.websites]
+        config=populated_config(); original_assignments=[site.browser_profile for site in config.websites]
         item=DiscoveredBrowserProfile("chrome","Google Chrome",str(exe),str(data),"Profile 2","Powtoon")
         key=configure_setup_profile(config,item)
         assert key=="chrome-work";assert list(config.browser_profiles)==["system-default","chrome-work"]
@@ -128,13 +129,25 @@ def test_setup_remaps_existing_logical_work_profile_without_duplicate():
 
 
 def test_first_run_completion_cancellation_and_assignment():
-    config = default_config(); assert should_run_setup(config, False); assert should_run_setup(config, True)
+    config = populated_config(); assert should_run_setup(config, False); assert should_run_setup(config, True)
     key = import_detected_profile(config, detected()); assign_all_websites(config, key); config.setup.completed = True
     assert not should_run_setup(config, True); assert {site.browser_profile for site in config.websites} == {key}
     assign_websites(config, {0: "system-default", 1: key}); assert config.websites[0].browser_profile == "system-default"
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"; cancel_setup(path, config); assert not config.setup.completed
         assert {site.browser_profile for site in config.websites} == {"system-default"}
+
+
+def test_skipped_browser_setup_is_optional_and_persists():
+    config = populated_config()
+    config.websites = []
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.json"
+        complete_setup(path, config, browser_skipped=True)
+        loaded, _ = load_config(path)
+        assert loaded.setup.completed
+        assert loaded.setup.extra["browser_setup_skipped"] is True
+        assert not should_run_setup(loaded, True)
 
 
 def test_firefox_launch_arguments_and_no_shell():

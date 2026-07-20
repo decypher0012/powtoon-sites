@@ -70,6 +70,13 @@ class SetupWizard(tk.Toplevel):
             wraplength=620,
             style="Card.TLabel",
         ).pack(anchor="w", pady=25)
+        ttk.Label(
+            self.body,
+            text="Browser setup is optional. You can skip it now and add or import websites from the main window.",
+            wraplength=620,
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(0, 12))
+        ttk.Button(self.body, text="Skip Browser Setup", command=self.skip_browser_setup).pack(anchor="w")
 
     def scan_page(self):
         ttk.Label(self.body, text="Scan Browsers", style="Header.TLabel").pack(anchor="w")
@@ -140,6 +147,15 @@ class SetupWizard(tk.Toplevel):
 
     def assign_page(self):
         ttk.Label(self.body, text="Assign Websites", style="Header.TLabel").pack(anchor="w")
+        if not self.config.websites:
+            ttk.Label(
+                self.body,
+                text="No websites are configured yet. This browser profile will be available when you add websites later.",
+                style="Card.TLabel",
+                wraplength=620,
+            ).pack(anchor="w", pady=12)
+            self.site_vars = []
+            return
         ttk.Label(
             self.body,
             text="Checked websites will use the selected work profile. Unchecked websites will use Windows Default Browser.",
@@ -167,9 +183,19 @@ class SetupWizard(tk.Toplevel):
         ttk.Label(self.body, text="Setup complete.", style="Header.TLabel").pack(anchor="w", pady=20)
         ttk.Label(
             self.body,
-            text=f"Your work websites are now configured to open in:\n{self.selected_profile.browser_name} - {self.selected_profile.profile_display_name}",
+            text=(
+                f"Your browser profile is ready:\n{self.selected_profile.browser_name} - "
+                f"{self.selected_profile.profile_display_name}\n\n"
+                "Add your first website or import an existing Work Launcher configuration."
+            ),
             style="Card.TLabel",
+            wraplength=620,
         ).pack(anchor="w")
+        actions = ttk.Frame(self.body)
+        actions.pack(anchor="w", pady=18)
+        ttk.Button(actions, text="Add Website", command=lambda: self.finish_with_action("add"),
+                   style="Primary.TButton").pack(side="left")
+        ttk.Button(actions, text="Import Configuration", command=lambda: self.finish_with_action("import")).pack(side="left", padx=6)
         self.next_button.configure(text="Finish")
 
     def next(self):
@@ -255,6 +281,21 @@ class SetupWizard(tk.Toplevel):
         if messagebox.askyesno(self.title(), "Cancel setup and use the Windows default browser where safe?", parent=self):
             cancel_setup(self.config_path, self.config)
             self.destroy()
+
+    def skip_browser_setup(self):
+        complete_setup(self.config_path, self.config, browser_skipped=True)
+        if self.on_complete:
+            self.on_complete()
+        self.destroy()
+
+    def finish_with_action(self, action: str):
+        if self.on_complete:
+            self.on_complete()
+        self.destroy()
+        callback_name = "add_first_website" if action == "add" else "import_configuration"
+        callback = getattr(self.master, callback_name, None)
+        if callback:
+            self.master.after(0, callback)
 
     def test_profile(self):
         item = self.selected_profile

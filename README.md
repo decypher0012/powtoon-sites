@@ -99,7 +99,7 @@ Troubleshooting:
 
 ## First-run setup and browser scanner
 
-On a clean configuration, Work Launcher opens a six-step setup wizard. It scans installed browsers on a background thread, lets the user select one detected work profile, assigns all or selected websites to it, offers a clearly labeled Google test-page launch, and records `setup.completed` so the wizard does not reopen. Cancelling keeps setup incomplete and assigns websites to the safe Windows Default Browser. The wizard can be launched again from **Settings > Browser Profiles > Run Setup Wizard Again**.
+Fresh installations contain no preconfigured websites or presets. The main window presents **Add Website** and **Import Configuration** actions instead. The optional first-run setup wizard can scan installed browsers and configure a work profile before websites are added, or users can skip browser setup without being prompted again. Its completion page links directly to adding or importing websites. Existing `%APPDATA%\WorkLauncher\config.json` files are preserved during upgrades, so previously configured websites remain available. The wizard can be launched again from **Settings > Browser Profiles > Run Setup Wizard Again**.
 
 Automatic installation and profile detection is implemented for Google Chrome, Microsoft Edge, Brave, Chromium, Vivaldi, and Mozilla Firefox. Settings provides **Scan Browsers**, **Rescan Profiles**, and **Import Detected Profile**. Detected profiles are never imported automatically; select one or more in the Detected Browser Profiles dialog and choose **Add Selected**. Already-imported profiles are identified by browser type, executable, user-data location, and profile identifier.
 

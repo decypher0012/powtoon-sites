@@ -4,19 +4,20 @@ from unittest.mock import Mock
 import pytest
 
 from work_launcher.config import (ApplicationConfig, ConfigError, PresetConfig, ScheduleConfig,
-                                  default_config, validate_config_data, config_to_dict)
+                                  validate_config_data, config_to_dict)
 from work_launcher.enterprise_policy import EnterprisePolicy, apply_policy
 from work_launcher.launcher import LaunchResult
 from work_launcher.scheduler import ScheduleState, due_schedules
 from work_launcher.workspace_launcher import WorkspaceLauncher
+from sample_data import populated_config
 
 
 def test_configuration_requires_real_booleans_and_valid_workspace_references():
-    data = config_to_dict(default_config())
+    data = config_to_dict(populated_config())
     data["websites"][0]["enabled"] = "false"
     with pytest.raises(ConfigError, match="true or false"):
         validate_config_data(data)
-    data = config_to_dict(default_config())
+    data = config_to_dict(populated_config())
     data["presets"] = [{"name": "Morning", "items": ["website:Missing"]}]
     with pytest.raises(ConfigError, match="missing items"):
         validate_config_data(data)
@@ -25,7 +26,7 @@ def test_configuration_requires_real_booleans_and_valid_workspace_references():
 def test_application_launch_uses_argument_list_without_shell(tmp_path):
     executable = tmp_path / "tool.exe"
     executable.write_bytes(b"test")
-    config = default_config()
+    config = populated_config()
     application = ApplicationConfig("Tool", str(executable), ["--safe", "value with spaces"])
     popen = Mock()
     launcher = WorkspaceLauncher(config, Mock(), popen=popen)
@@ -38,7 +39,7 @@ def test_application_launch_uses_argument_list_without_shell(tmp_path):
 def test_preset_preserves_mixed_item_order(tmp_path):
     executable = tmp_path / "tool.exe"
     executable.write_bytes(b"test")
-    config = default_config()
+    config = populated_config()
     config.applications = [ApplicationConfig("Tool", str(executable))]
     preset = PresetConfig("Morning", [f"website:{config.websites[0].name}", "application:Tool"], 0)
     website_launcher = Mock()
@@ -59,7 +60,7 @@ def test_schedule_runs_once_per_day_and_respects_network():
 
 
 def test_enterprise_policy_removes_local_applications_when_disabled():
-    config = default_config()
+    config = populated_config()
     config.applications = [ApplicationConfig("Tool", "tool.exe")]
     config.presets = [PresetConfig("Preset", ["application:Tool"])]
     apply_policy(config, EnterprisePolicy(allow_applications=False))

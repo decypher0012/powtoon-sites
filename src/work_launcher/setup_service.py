@@ -12,6 +12,8 @@ from .profile_health import validate_profile_assignment
 
 def should_run_setup(config: AppConfig, config_existed: bool = True) -> bool:
     if not config_existed or not config.setup.completed: return True
+    if config.setup.extra.get("browser_setup_skipped") is True: return False
+    if not config.websites: return False
     assigned = {website.browser_profile for website in config.websites}
     return not any(key in config.browser_profiles and config.browser_profiles[key].type != "system" for key in assigned)
 
@@ -57,7 +59,7 @@ def remap_detected_profile(config: AppConfig, profile_id: str, detected: Discove
 
 
 def configure_setup_profile(config: AppConfig, detected: DiscoveredBrowserProfile) -> str:
-    if WORK_PROFILE_ID in config.browser_profiles and any(site.browser_profile == WORK_PROFILE_ID for site in config.websites):
+    if WORK_PROFILE_ID in config.browser_profiles:
         return remap_detected_profile(config, WORK_PROFILE_ID, detected)
     return import_detected_profile(config, detected)
 
@@ -73,8 +75,13 @@ def assign_websites(config: AppConfig, assignments: dict[int, str]) -> None:
         config.websites[index].browser_profile = profile_id
 
 
-def complete_setup(path: Path, config: AppConfig) -> None:
-    config.setup.completed = True; save_config(path, config)
+def complete_setup(path: Path, config: AppConfig, browser_skipped: bool = False) -> None:
+    config.setup.completed = True
+    if browser_skipped:
+        config.setup.extra["browser_setup_skipped"] = True
+    else:
+        config.setup.extra.pop("browser_setup_skipped", None)
+    save_config(path, config)
 
 
 def cancel_setup(path: Path, config: AppConfig) -> None:

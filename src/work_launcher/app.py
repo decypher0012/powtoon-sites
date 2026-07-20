@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import json
 import sys
 import time
 import tkinter as tk
@@ -12,7 +13,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import AppConfig, WebsiteConfig, get_config_path, load_config, save_config
+from .config import AppConfig, WebsiteConfig, get_config_path, load_config, save_config, validate_config_data
 from .constants import APP_NAME, DEFAULT_MIN_WINDOW_HEIGHT, DEFAULT_MIN_WINDOW_WIDTH, UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPOSITORY, VISUAL_STYLES
 from .launcher import WebsiteLauncher
 from .logging_config import configure_logging
@@ -62,7 +63,7 @@ class WebsiteDialog(tk.Toplevel):
                   ("URL", ttk.Entry(frame, textvariable=self.url_var, width=52)),
                   ("Browser Profile", ttk.Combobox(frame, textvariable=self.profile_var, values=list(self.profile_names), state="readonly", width=49)),
                   ("Launch Group (Optional)", ttk.Combobox(frame, textvariable=self.group_var,
-                    values=["", "Daily Work", "Morning", "Meetings", "Admin", "Google", "HubSpot", "Custom"], width=49)))
+                    values=["", "Daily Work", "Morning", "Meetings", "Admin", "Research", "Custom"], width=49)))
         for row, (label, widget) in enumerate(fields):
             ttk.Label(frame, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
         ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=4, column=1, sticky="w")
@@ -638,6 +639,21 @@ class WorkLauncherApp(tk.Tk):
         for child in self.website_container.winfo_children():
             child.destroy()
         self.website_vars.clear()
+        if not self.config.websites:
+            empty = ttk.Frame(self.website_container, padding=24, style="Card.TFrame")
+            empty.pack(fill="both", expand=True)
+            ttk.Label(empty, text="No websites configured yet.", style="Header.TLabel").pack(pady=(20, 8))
+            ttk.Label(
+                empty,
+                text="Add your first website or import websites from a Work Launcher configuration file.",
+                style="Card.TLabel",
+                wraplength=460,
+            ).pack(pady=(0, 16))
+            actions = ttk.Frame(empty)
+            actions.pack()
+            ttk.Button(actions, text="Add Website", command=self.add_first_website,
+                       style="Primary.TButton").pack(side="left", padx=4)
+            ttk.Button(actions, text="Import Configuration", command=self.import_configuration).pack(side="left", padx=4)
         for site in self.config.websites:
             row = ttk.Frame(self.website_container)
             row.pack(fill="x", pady=2)
@@ -648,8 +664,69 @@ class WorkLauncherApp(tk.Tk):
         groups = sorted({site.launch_group for site in self.config.websites if site.launch_group}, key=str.casefold)
         self.launch_group_combo.configure(values=["All Websites", *groups])
         if self.launch_group_var.get() not in ["All Websites", *groups]: self.launch_group_var.set("All Websites")
+        has_websites = bool(self.config.websites)
+        self.open_all_button.configure(state="normal" if has_websites else "disabled")
+        self.open_selected_button.configure(state="normal" if has_websites else "disabled")
         self.refresh_preset_controls()
-        self.set_status("Ready.")
+        self.set_status("Ready." if has_websites else "No websites configured. Add or import websites to begin.")
+
+    def add_first_website(self) -> None:
+        dialog = WebsiteDialog(self, "Add Website", self.config.browser_profiles)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        try:
+            warnings = add_website(self.config, dialog.result)
+            save_config(self.config_path, self.config)
+            self.refresh_ui()
+            if warnings:
+                messagebox.showwarning(APP_NAME, "\n".join(warnings), parent=self)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not add website: {exc}", parent=self)
+
+    def import_configuration(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Import Work Launcher Configuration",
+            filetypes=[("JSON configuration", "*.json")],
+            parent=self,
+        )
+        if not path:
+            return
+        try:
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+            imported_config = validate_config_data(raw) if isinstance(raw, dict) and "browser_profiles" in raw else None
+            incoming = imported_config.websites if imported_config else preview_import(Path(path), self.config)
+            preview = "\n".join(f"• {site.name}" for site in incoming[:12])
+            if len(incoming) > 12:
+                preview += f"\n… and {len(incoming) - 12} more"
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"Import preview ({len(incoming)} websites):\n\n{preview or 'No websites'}\n\nContinue?",
+                parent=self,
+            ):
+                return
+            replace = bool(self.config.websites) and messagebox.askyesno(
+                APP_NAME, "Replace existing websites? Choose No to merge.", parent=self
+            )
+            if imported_config:
+                for profile_id, profile in imported_config.browser_profiles.items():
+                    self.config.browser_profiles.setdefault(profile_id, copy.deepcopy(profile))
+            count = import_websites(
+                self.config,
+                incoming,
+                replace=replace,
+                skip_duplicate_names=True,
+                skip_duplicate_urls=True,
+            )
+            if imported_config and (replace or not self.config.applications):
+                self.config.applications = copy.deepcopy(imported_config.applications)
+                self.config.presets = copy.deepcopy(imported_config.presets)
+                self.config.schedules = copy.deepcopy(imported_config.schedules)
+            save_config(self.config_path, self.config)
+            self.refresh_ui()
+            messagebox.showinfo(APP_NAME, f"Imported {count} websites.", parent=self)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not import configuration: {exc}", parent=self)
 
     def refresh_preset_controls(self) -> None:
         names = [preset.name for preset in self.config.presets]
@@ -685,6 +762,8 @@ class WorkLauncherApp(tk.Tk):
     def open_command_palette(self) -> None:
         commands = {
             "Open all work apps": self.open_all_work_apps,
+            "Add website": self.add_first_website,
+            "Import configuration": self.import_configuration,
             "Open settings": self.open_settings,
             "Manage workspaces": self.open_workspace_manager,
             "Check for updates": lambda: self.check_for_updates(force=True),

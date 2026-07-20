@@ -119,6 +119,7 @@ Confirm that:
 - The installed directory contains `WorkLauncher.exe`, `Updater.exe`, and `install-mode.json`.
 - Existing websites, browser profiles, and preferences remain intact.
 - A clean installation contains no hardcoded local Chrome profile directory; first-run setup remaps the logical `chrome-work` profile to the selected local profile.
+- A clean installation contains no preconfigured websites or presets; users add or import their own configuration after launch.
 
 The installer does not package, overwrite, or remove data under:
 
