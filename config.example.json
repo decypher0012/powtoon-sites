@@ -1,9 +1,10 @@
 {
-  "config_version": 4,
+  "config_version": 6,
   "settings": {
     "launch_delay_seconds": 0.5,
     "duplicate_launch_cooldown_seconds": 5.0,
     "theme": "system",
+    "visual_style": "enterprise",
     "remember_window_position": true,
     "minimize_to_tray": false,
     "launch_with_windows": false,
@@ -44,5 +45,31 @@
     {"name":"Google Keep","url":"https://keep.google.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":"Google"},
     {"name":"HubSpot Dashboard","url":"https://app.hubspot.com/reports-dashboard/3444711/view/10170444","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""},
     {"name":"Powtoon Okta","url":"https://powtoon.okta.com/","enabled":true,"selected":true,"browser_profile":"chrome-work","launch_group":""}
-  ]
+  ],
+  "applications": [
+    {
+      "name": "Example Tool",
+      "path": "C:\\Path\\To\\Tool.exe",
+      "arguments": [],
+      "working_directory": "",
+      "enabled": false,
+      "launch_group": "",
+      "only_if_not_running": true
+    }
+  ],
+  "presets": [
+    {
+      "name": "All Work Apps",
+      "items": [
+        "website:Renewal Tracker Admin",
+        "website:Gmail",
+        "website:Google Calendar",
+        "website:Google Keep",
+        "website:HubSpot Dashboard",
+        "website:Powtoon Okta"
+      ],
+      "launch_delay_seconds": 0.5
+    }
+  ],
+  "schedules": []
 }

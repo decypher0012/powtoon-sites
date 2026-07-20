@@ -110,7 +110,8 @@ class GitHubReleaseClient:
         names=[item.get("name") for item in raw_assets if isinstance(item,dict)]
         if len(names)!=len(set(names)): raise UpdateMetadataError("GitHub release contains duplicate asset names.")
         assets={item.get("name"):item for item in raw_assets if isinstance(item,dict) and isinstance(item.get("name"),str)}
-        if "release.json" not in assets or "SHA256SUMS.txt" not in assets: raise UpdateMetadataError("Release is missing release.json or SHA256SUMS.txt.")
+        if "release.json" not in assets or "SHA256SUMS.txt" not in assets or "Updater.exe" not in assets:
+            raise UpdateMetadataError("Release is missing release.json, SHA256SUMS.txt, or Updater.exe.")
         metadata=self._json(self._release_asset_url(owner,repository,assets["release.json"]))
         version,minimum,_,_=validate_release_metadata(metadata,channel=channel,tag_name=str(release.get("tag_name","")),assets=assets)
         if installation_kind not in {"portable", "installer"}: raise UpdateMetadataError("Unsupported installation type.")
@@ -128,6 +129,12 @@ class GitHubReleaseClient:
             if name in entries: raise UpdateMetadataError("SHA256SUMS.txt contains duplicate asset names.")
             entries[name]=parts[0].lower()
         if entries.get(asset_name)!=expected: raise UpdateMetadataError("release.json and SHA256SUMS.txt do not agree.")
+        updater_checksum = entries.get("Updater.exe", "")
+        updater_size = assets["Updater.exe"].get("size")
+        if not re.fullmatch(r"[0-9a-f]{64}", updater_checksum) or type(updater_size) is not int or updater_size <= 0:
+            raise UpdateMetadataError("Updater.exe is missing valid checksum or size metadata.")
         asset_url=self._release_asset_url(owner,repository,assets[asset_name])
+        updater_url=self._release_asset_url(owner,repository,assets["Updater.exe"])
         return ReleaseInfo(version,metadata["release_date"],minimum,metadata["mandatory"],asset_name,asset_url,expected,expected_size,
-            tuple(metadata["release_notes"]),str(release.get("html_url","")),selected_kind)
+            tuple(metadata["release_notes"]),str(release.get("html_url","")),selected_kind,
+            "Updater.exe", updater_url, updater_checksum, updater_size)

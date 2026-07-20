@@ -7,6 +7,7 @@ import urllib.request
 import urllib.parse
 import ssl
 import time
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import Callable
@@ -25,7 +26,7 @@ def updates_dir() -> Path:
 def cleanup_stale_updates(root: Path | None = None, max_age_days: int = 7) -> int:
     root=(root or updates_dir()).resolve(); cutoff=time.time()-max_age_days*86400; removed=0
     if not root.is_dir(): return 0
-    for pattern in ("WorkLauncher-*.exe.part","WorkLauncher-*.exe"):
+    for pattern in ("WorkLauncher-*.exe.part","WorkLauncher-*.exe","Updater-*.exe.part","Updater-*.exe"):
         for item in root.glob(pattern):
             try:
                 if item.is_file() and item.resolve().parent==root and item.stat().st_mtime<cutoff: item.unlink(); removed+=1
@@ -75,3 +76,17 @@ def download_release(release: ReleaseInfo, destination: Path | None = None, prog
         temporary.unlink(missing_ok=True); raise UpdateNetworkError("Unable to download the update.") from exc
     except Exception:
         temporary.unlink(missing_ok=True); raise
+
+
+def download_updater(release: ReleaseInfo, opener: Callable | None = None) -> Path:
+    if not release.updater_url or not release.updater_sha256 or not release.updater_size:
+        raise UpdateIntegrityError("Release does not contain verified updater metadata.")
+    companion = replace(
+        release,
+        asset_name=release.updater_name,
+        asset_url=release.updater_url,
+        sha256=release.updater_sha256,
+        size=release.updater_size,
+        asset_kind="updater",
+    )
+    return download_release(companion, updates_dir() / f"Updater-{release.version}.exe", opener=opener)

@@ -35,6 +35,39 @@ class WebsiteConfig:
 
 
 @dataclass
+class ApplicationConfig:
+    name: str
+    path: str
+    arguments: list[str] = field(default_factory=list)
+    working_directory: str = ""
+    enabled: bool = True
+    launch_group: str = ""
+    only_if_not_running: bool = False
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class PresetConfig:
+    name: str
+    items: list[str] = field(default_factory=list)
+    launch_delay_seconds: float | None = None
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class ScheduleConfig:
+    name: str
+    preset: str
+    time: str
+    weekdays: list[int] = field(default_factory=lambda: list(range(5)))
+    enabled: bool = True
+    confirm_seconds: int = 10
+    require_network: bool = False
+    last_run_date: str = ""
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
 class AppSettings:
     launch_delay_seconds: float = DEFAULT_LAUNCH_DELAY_SECONDS
     duplicate_launch_cooldown_seconds: float = DEFAULT_DUPLICATE_LAUNCH_COOLDOWN_SECONDS
@@ -77,6 +110,9 @@ class AppConfig:
     settings: AppSettings = field(default_factory=AppSettings)
     browser_profiles: dict[str, BrowserProfile] = field(default_factory=dict)
     websites: list[WebsiteConfig] = field(default_factory=list)
+    applications: list[ApplicationConfig] = field(default_factory=list)
+    presets: list[PresetConfig] = field(default_factory=list)
+    schedules: list[ScheduleConfig] = field(default_factory=list)
     setup: SetupConfig = field(default_factory=SetupConfig)
     updates: UpdateConfig = field(default_factory=UpdateConfig)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -95,10 +131,12 @@ def get_config_path() -> Path:
 
 
 def default_config() -> AppConfig:
+    websites = [WebsiteConfig(**item) for item in DEFAULT_WEBSITES]
     return AppConfig(
         settings=AppSettings(),
         browser_profiles={key: BrowserProfile(**value) for key, value in DEFAULT_BROWSER_PROFILES.items()},
-        websites=[WebsiteConfig(**item) for item in DEFAULT_WEBSITES],
+        websites=websites,
+        presets=[PresetConfig("All Work Apps", [f"website:{item.name}" for item in websites])],
         setup=SetupConfig(completed=False),
         updates=UpdateConfig(),
     )
@@ -128,6 +166,17 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
         raise ConfigError("settings.launch_delay_seconds must be >= 0")
     if settings.duplicate_launch_cooldown_seconds < 0:
         raise ConfigError("settings.duplicate_launch_cooldown_seconds must be >= 0")
+    for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows"):
+        if type(getattr(settings, name)) is not bool:
+            raise ConfigError(f"settings.{name} must be true or false")
+    for name in ("window_width", "window_height"):
+        value = getattr(settings, name)
+        if type(value) is not int or not 320 <= value <= 10000:
+            raise ConfigError(f"settings.{name} must be an integer between 320 and 10000")
+    for name in ("window_x", "window_y"):
+        value = getattr(settings, name)
+        if value is not None and type(value) is not int:
+            raise ConfigError(f"settings.{name} must be an integer or null")
     return settings
 
 
@@ -145,18 +194,112 @@ def _parse_websites(items: Any) -> list[WebsiteConfig]:
         if not isinstance(url, str):
             raise ConfigError(f"website.url must be a string for {name}")
         _validate_url(url)
+        enabled = item.get("enabled", True)
+        selected = item.get("selected", False)
+        if type(enabled) is not bool or type(selected) is not bool:
+            raise ConfigError(f"website enabled/selected values must be true or false for {name}")
         websites.append(
             WebsiteConfig(
                 name=name.strip(),
                 url=url.strip(),
-                enabled=bool(item.get("enabled", True)),
-                selected=bool(item.get("selected", False)),
+                enabled=enabled,
+                selected=selected,
                 browser_profile=str(item.get("browser_profile", WORK_PROFILE_ID)),
                 launch_group=str(item.get("launch_group", "")).strip(),
                 extra={key:value for key,value in item.items() if key not in WebsiteConfig.__dataclass_fields__},
             )
         )
     return websites
+
+
+def _parse_applications(items: Any) -> list[ApplicationConfig]:
+    if not isinstance(items, list):
+        raise ConfigError("applications must be a list")
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ConfigError("each application must be an object")
+        name, path = item.get("name"), item.get("path")
+        arguments = item.get("arguments", [])
+        if not isinstance(name, str) or not name.strip() or not isinstance(path, str) or not path.strip():
+            raise ConfigError("application name and path must be non-empty text")
+        if not isinstance(arguments, list) or not all(isinstance(value, str) for value in arguments):
+            raise ConfigError(f"application.arguments must be a list of strings for {name}")
+        for boolean_name in ("enabled", "only_if_not_running"):
+            if type(item.get(boolean_name, boolean_name == "enabled")) is not bool:
+                raise ConfigError(f"application.{boolean_name} must be true or false for {name}")
+        result.append(ApplicationConfig(
+            name=name.strip(), path=path.strip(), arguments=arguments,
+            working_directory=str(item.get("working_directory", "")).strip(),
+            enabled=item.get("enabled", True),
+            launch_group=str(item.get("launch_group", "")).strip(),
+            only_if_not_running=item.get("only_if_not_running", False),
+            extra={key: value for key, value in item.items() if key not in ApplicationConfig.__dataclass_fields__},
+        ))
+    return result
+
+
+def _parse_presets(items: Any, websites: list[WebsiteConfig], applications: list[ApplicationConfig]) -> list[PresetConfig]:
+    if not isinstance(items, list):
+        raise ConfigError("presets must be a list")
+    valid = {f"website:{item.name}" for item in websites} | {f"application:{item.name}" for item in applications}
+    result = []
+    names = set()
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
+            raise ConfigError("each preset must have a non-empty name")
+        name = item["name"].strip()
+        if name.casefold() in names:
+            raise ConfigError(f"duplicate preset name: {name}")
+        names.add(name.casefold())
+        references = item.get("items", [])
+        if not isinstance(references, list) or not all(isinstance(value, str) for value in references):
+            raise ConfigError(f"preset.items must be a list of strings for {name}")
+        missing = [value for value in references if value not in valid]
+        if missing:
+            raise ConfigError(f"preset {name} references missing items: {', '.join(missing)}")
+        delay = item.get("launch_delay_seconds")
+        if delay is not None and (not isinstance(delay, (int, float)) or isinstance(delay, bool) or delay < 0):
+            raise ConfigError(f"preset.launch_delay_seconds must be non-negative or null for {name}")
+        result.append(PresetConfig(name, references, delay,
+            {key: value for key, value in item.items() if key not in PresetConfig.__dataclass_fields__}))
+    return result
+
+
+def _parse_schedules(items: Any, presets: list[PresetConfig]) -> list[ScheduleConfig]:
+    if not isinstance(items, list):
+        raise ConfigError("schedules must be a list")
+    preset_names = {item.name for item in presets}
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ConfigError("each schedule must be an object")
+        name, preset, clock = item.get("name"), item.get("preset"), item.get("time")
+        if not all(isinstance(value, str) and value.strip() for value in (name, preset, clock)):
+            raise ConfigError("schedule name, preset, and time must be non-empty text")
+        if preset not in preset_names:
+            raise ConfigError(f"schedule {name} references missing preset: {preset}")
+        try:
+            hour, minute = (int(value) for value in clock.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59): raise ValueError
+        except (ValueError, AttributeError):
+            raise ConfigError(f"schedule.time must be HH:MM for {name}") from None
+        weekdays = item.get("weekdays", list(range(5)))
+        if not isinstance(weekdays, list) or not weekdays or any(type(day) is not int or day not in range(7) for day in weekdays):
+            raise ConfigError(f"schedule.weekdays must contain weekday numbers 0-6 for {name}")
+        for boolean_name in ("enabled", "require_network"):
+            if type(item.get(boolean_name, boolean_name == "enabled")) is not bool:
+                raise ConfigError(f"schedule.{boolean_name} must be true or false for {name}")
+        confirm = item.get("confirm_seconds", 10)
+        if type(confirm) is not int or not 0 <= confirm <= 300:
+            raise ConfigError(f"schedule.confirm_seconds must be between 0 and 300 for {name}")
+        last_run_date = item.get("last_run_date", "")
+        if not isinstance(last_run_date, str):
+            raise ConfigError(f"schedule.last_run_date must be text for {name}")
+        result.append(ScheduleConfig(name.strip(), preset, clock, weekdays, item.get("enabled", True),
+            confirm, item.get("require_network", False), last_run_date,
+            {key: value for key, value in item.items() if key not in ScheduleConfig.__dataclass_fields__}))
+    return result
 
 
 def config_to_dict(config: AppConfig) -> dict[str, Any]:
@@ -168,6 +311,9 @@ def config_to_dict(config: AppConfig) -> dict[str, Any]:
         "settings": serialized(config.settings),
         "browser_profiles": {key: serialized(value) for key, value in config.browser_profiles.items()},
         "websites": [serialized(item) for item in config.websites],
+        "applications": [serialized(item) for item in config.applications],
+        "presets": [serialized(item) for item in config.presets],
+        "schedules": [serialized(item) for item in config.schedules],
         "setup": serialized(config.setup),
         "updates": serialized(config.updates),
     }
@@ -195,6 +341,9 @@ def validate_config_data(data: Any) -> AppConfig:
     for website in websites:
         if website.browser_profile not in profiles:
             raise ConfigError(f"Website {website.name} references missing browser profile: {website.browser_profile}")
+    applications = _parse_applications(data.get("applications", []))
+    presets = _parse_presets(data.get("presets", []), websites, applications)
+    schedules = _parse_schedules(data.get("schedules", []), presets)
     setup_data = data.get("setup", {})
     if not isinstance(setup_data,dict) or type(setup_data.get("completed",False)) is not bool: raise ConfigError("setup.completed must be true or false")
     setup = SetupConfig(completed=setup_data.get("completed",False),extra={key:value for key,value in setup_data.items() if key!="completed"})
@@ -218,9 +367,12 @@ def validate_config_data(data: Any) -> AppConfig:
     if updates.installation_kind not in {"portable", "installer"}: raise ConfigError("updates.installation_kind must be portable or installer")
     try: config_version=int(data.get("config_version",CONFIG_VERSION))
     except (TypeError,ValueError) as exc: raise ConfigError("config_version must be an integer") from exc
+    if config_version > CONFIG_VERSION:
+        raise ConfigError(f"Configuration version {config_version} is newer than this application supports")
     return AppConfig(config_version=config_version, settings=settings,
-                     browser_profiles=profiles,websites=websites,setup=setup,updates=updates,
-                     extra={key:value for key,value in data.items() if key not in {"config_version","settings","browser_profiles","websites","setup","updates"}})
+                     browser_profiles=profiles,websites=websites,applications=applications,presets=presets,schedules=schedules,
+                     setup=setup,updates=updates,
+                     extra={key:value for key,value in data.items() if key not in {"config_version","settings","browser_profiles","websites","applications","presets","schedules","setup","updates"}})
 
 
 def write_config(path: Path, config: AppConfig) -> None:
@@ -261,6 +413,12 @@ def load_config(path: Path | None = None) -> tuple[AppConfig, list[str]]:
             # Existing installations have already selected profiles; do not force a wizard after upgrade.
             migrated["setup"] = migrated.get("setup") or {"completed": version >= 2}
             migrated["updates"] = migrated.get("updates") or config_to_dict(default_config())["updates"]
+            migrated.setdefault("applications", [])
+            migrated.setdefault("presets", [{
+                "name": "All Work Apps",
+                "items": [f"website:{item.get('name', '')}" for item in migrated.get("websites", []) if item.get("name")],
+            }])
+            migrated.setdefault("schedules", [])
             config = validate_config_data(migrated)
             backup = backup_config(path)
             try:

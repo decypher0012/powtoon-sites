@@ -40,7 +40,11 @@ def add_website(config: AppConfig, website: WebsiteConfig) -> list[str]:
 
 def edit_website(config: AppConfig, index: int, website: WebsiteConfig) -> list[str]:
     warnings = validate_website(website, config, index)
+    old_reference = f"website:{config.websites[index].name}"
     config.websites[index] = website
+    new_reference = f"website:{website.name}"
+    for preset in config.presets:
+        preset.items = [new_reference if item == old_reference else item for item in preset.items]
     return warnings
 
 
@@ -61,6 +65,9 @@ def delete_websites(config: AppConfig, indices: Iterable[int]) -> list[WebsiteCo
     removed = [copy.deepcopy(config.websites[index]) for index in selected]
     for index in reversed(selected):
         del config.websites[index]
+    removed_references = {f"website:{item.name}" for item in removed}
+    for preset in config.presets:
+        preset.items = [item for item in preset.items if item not in removed_references]
     return removed
 
 
@@ -121,7 +128,11 @@ def preview_import(path: Path, config: AppConfig) -> list[WebsiteConfig]:
     if isinstance(data, list): data = {"websites": data}
     if not isinstance(data, dict) or not isinstance(data.get("websites"), list):
         raise WebsiteValidationError("Import JSON must contain a websites list.")
-    probe = config_to_dict(config); probe["websites"] = data["websites"]
+    probe = config_to_dict(config)
+    probe["websites"] = data["websites"]
+    # Website-only imports are validated independently from presets in the
+    # destination configuration, which may reference websites being replaced.
+    probe["presets"] = []
     return validate_config_data(probe).websites
 
 
@@ -132,9 +143,17 @@ def import_websites(config: AppConfig, incoming: list[WebsiteConfig], *, replace
     for website in incoming:
         if skip_duplicate_names and any(site.name.casefold() == website.name.casefold() for site in target): continue
         if skip_duplicate_urls and any(site.url == website.url for site in target): continue
-        validate_website(website, AppConfig(config.config_version, config.settings, config.browser_profiles, target))
+        validate_website(website, AppConfig(
+            config_version=config.config_version,
+            settings=config.settings,
+            browser_profiles=config.browser_profiles,
+            websites=target,
+        ))
         target.append(copy.deepcopy(website)); added += 1
     config.websites = target
+    valid = {f"website:{item.name}" for item in target}
+    for preset in config.presets:
+        preset.items = [item for item in preset.items if not item.startswith("website:") or item in valid]
     return added
 
 

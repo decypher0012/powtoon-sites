@@ -7,6 +7,7 @@ import tkinter as tk
 import copy
 import queue
 import threading
+from datetime import datetime
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,6 +36,16 @@ from .version import __version__
 from .update_status import consume_update_status
 from .update_download import cleanup_stale_updates
 from .profile_health import get_profile_health, stale_profile_warning, validate_profile_assignment
+from .command_palette import CommandPalette
+from .enterprise_policy import apply_policy, load_policy
+from .health_checks import check_url
+from .scheduler import ScheduleState, due_schedules
+from .session_report import create_session, save_session
+from .tray import TrayController
+from .workspace_dialogs import WorkspaceManager
+from .workspace_launcher import WorkspaceLauncher, network_available
+from .single_instance import AlreadyRunningError, SingleInstance
+from .constants import app_data_dir
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -158,9 +169,11 @@ class SettingsWindow(tk.Toplevel):
         ttk.Label(form, text="Visual Style").grid(row=2, column=2, sticky="w", padx=(18, 0))
         ttk.Combobox(form, textvariable=self.visual_style_var, values=list(VISUAL_STYLES), state="readonly", width=12).grid(row=2, column=3, sticky="w")
         self.remember_var = tk.BooleanVar(value=self.master_app.config.settings.remember_window_position)
+        self.tray_var = tk.BooleanVar(value=self.master_app.config.settings.minimize_to_tray)
         self.startup_var = tk.BooleanVar(value=self.master_app.config.settings.launch_with_windows)
         ttk.Checkbutton(form, text="Remember window position", variable=self.remember_var).grid(row=3, column=0, columnspan=2, sticky="w")
-        ttk.Checkbutton(form, text="Launch Work Launcher when Windows starts", variable=self.startup_var).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(form, text="Minimize to notification area when closed", variable=self.tray_var).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(form, text="Launch Work Launcher when Windows starts", variable=self.startup_var).grid(row=5, column=0, columnspan=2, sticky="w")
         updates = ttk.LabelFrame(frame, text="Updates", padding=8); updates.pack(fill="x", pady=(8, 0))
         self.update_channel_var=tk.StringVar(value=self.master_app.config.updates.channel); self.update_policy_var=tk.StringVar(value=self.master_app.config.updates.policy)
         self.update_install_var=tk.StringVar(value=self.master_app.config.updates.installation_kind)
@@ -472,12 +485,15 @@ class SettingsWindow(tk.Toplevel):
 
     def save(self) -> None:
         try:
+            tray_var = getattr(self, "tray_var", None)
+            tray_enabled = tray_var.get() if tray_var is not None else self.master_app.config.settings.minimize_to_tray
             delay=float(self.delay_var.get()); cooldown=float(self.cooldown_var.get())
             if delay < 0 or cooldown < 0: raise ValueError("Launch delay and duplicate cooldown cannot be negative.")
             original=self.original_config; config=self.master_app.config
             general_dirty=(delay != original.settings.launch_delay_seconds or cooldown != original.settings.duplicate_launch_cooldown_seconds
                 or self.theme_var.get() != original.settings.theme or self.visual_style_var.get() != original.settings.visual_style
-                or self.remember_var.get() != original.settings.remember_window_position)
+                or self.remember_var.get() != original.settings.remember_window_position
+                or tray_enabled != original.settings.minimize_to_tray)
             startup_dirty=self.startup_var.get() != original.settings.launch_with_windows
             update_values=(self.update_channel_var.get(),self.update_policy_var.get(),
                            self.update_check_var.get(),self.update_download_var.get())
@@ -495,6 +511,7 @@ class SettingsWindow(tk.Toplevel):
                 config.settings.launch_delay_seconds=delay; config.settings.duplicate_launch_cooldown_seconds=cooldown
                 config.settings.theme=self.theme_var.get(); config.settings.visual_style=self.visual_style_var.get()
                 config.settings.remember_window_position=self.remember_var.get()
+                config.settings.minimize_to_tray=tray_enabled
             if updates_dirty:
                 (config.updates.channel,config.updates.policy,
                  config.updates.automatically_check,config.updates.automatically_download)=update_values
@@ -533,11 +550,18 @@ class WorkLauncherApp(tk.Tk):
         self.executable_path = Path(sys.executable)
         self.log_path = configure_logging()
         self.config, warnings = load_config(self.config_path)
+        try:
+            apply_policy(self.config, load_policy())
+        except Exception as exc:
+            warnings.append(f"Enterprise policy could not be applied: {exc}")
         self.palette = apply_visual_style(self, self.config.settings.visual_style)
         cleanup_stale_updates()
         logging.info("Starting %s version %s", APP_NAME, __version__)
         self.launcher = WebsiteLauncher(browser_profiles=self.config.browser_profiles)
+        self.workspace_launcher = WorkspaceLauncher(self.config, self.launcher)
         self.update_manager = UpdateManager(self.config, self.config_path); self.update_events = queue.Queue()
+        self.schedule_state: dict[str, ScheduleState] = {}
+        self.tray: TrayController | None = None
         self.is_launching = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build()
@@ -551,6 +575,9 @@ class WorkLauncherApp(tk.Tk):
         update_status=consume_update_status()
         if update_status: self.after(300,lambda status=update_status:self.show_update_result(status))
         self.after(0, self.refresh_update_summary)
+        self.after(1000, self._schedule_tick)
+        if self.config.settings.minimize_to_tray:
+            self.after(0, self._ensure_tray)
 
     def _build(self) -> None:
         root = ttk.Frame(self, padding=12, style="Card.TFrame")
@@ -575,10 +602,16 @@ class WorkLauncherApp(tk.Tk):
         self.launch_group_combo = ttk.Combobox(ctrl_frame, textvariable=self.launch_group_var, state="readonly", width=20)
         self.launch_group_combo.pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Launch Group", command=self.open_launch_group).pack(fill="x", pady=2)
+        ttk.Label(ctrl_frame, text="Workspace Preset").pack(anchor="w", pady=(8, 1))
+        self.preset_var = tk.StringVar()
+        self.preset_combo = ttk.Combobox(ctrl_frame, textvariable=self.preset_var, state="readonly", width=20)
+        self.preset_combo.pack(fill="x", pady=2)
+        ttk.Button(ctrl_frame, text="Launch Preset", command=self.launch_selected_preset).pack(fill="x", pady=2)
+        ttk.Button(ctrl_frame, text="Manage Workspaces", command=self.open_workspace_manager).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Select All", command=self.select_all).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Clear Selection", command=self.clear_selection).pack(fill="x", pady=2)
         ttk.Button(ctrl_frame, text="Settings", command=self.open_settings, style="Primary.TButton").pack(fill="x", pady=(10, 2))
-        ttk.Button(ctrl_frame, text="Close", command=self.destroy).pack(fill="x", pady=2)
+        ttk.Button(ctrl_frame, text="Close", command=self.on_close).pack(fill="x", pady=2)
         update_box = ttk.LabelFrame(ctrl_frame, text="Update Status", padding=8)
         update_box.pack(fill="x", pady=(12, 0))
         self.update_summary_var = tk.StringVar(value="Latest version: Unknown")
@@ -595,6 +628,7 @@ class WorkLauncherApp(tk.Tk):
         self.bind_all("<Control-comma>", lambda event: self.open_settings())
         self.bind_all("<Escape>", lambda event: self._escape_handler())
         self.bind_all("<Control-a>", lambda event: self.select_all())
+        self.bind_all("<Control-k>", lambda event: self.open_command_palette())
 
     def _escape_handler(self) -> None:
         if self.winfo_exists():
@@ -614,7 +648,144 @@ class WorkLauncherApp(tk.Tk):
         groups = sorted({site.launch_group for site in self.config.websites if site.launch_group}, key=str.casefold)
         self.launch_group_combo.configure(values=["All Websites", *groups])
         if self.launch_group_var.get() not in ["All Websites", *groups]: self.launch_group_var.set("All Websites")
+        self.refresh_preset_controls()
         self.set_status("Ready.")
+
+    def refresh_preset_controls(self) -> None:
+        names = [preset.name for preset in self.config.presets]
+        if hasattr(self, "preset_combo"):
+            self.preset_combo.configure(values=names)
+            if self.preset_var.get() not in names:
+                self.preset_var.set(names[0] if names else "")
+        if self.tray:
+            self.tray.stop()
+            self.tray = None
+            self._ensure_tray()
+
+    def open_workspace_manager(self) -> None:
+        WorkspaceManager(self)
+
+    def launch_selected_preset(self) -> None:
+        name = self.preset_var.get()
+        preset = next((item for item in self.config.presets if item.name == name), None)
+        if preset is None:
+            self.set_status("Select a workspace preset.")
+            return
+        self.launch_preset(preset)
+
+    def launch_preset(self, preset) -> None:
+        started = datetime.now().astimezone()
+        results = self.workspace_launcher.launch_preset(preset)
+        session = create_session(preset.name, started, results)
+        report = save_session(session)
+        failed = [item.item for item in results if not item.success]
+        self.set_status(f"Preset {preset.name} complete. Report: {report.name}" if not failed
+                        else f"Preset {preset.name} complete. Failed: {', '.join(failed)}")
+
+    def open_command_palette(self) -> None:
+        commands = {
+            "Open all work apps": self.open_all_work_apps,
+            "Open settings": self.open_settings,
+            "Manage workspaces": self.open_workspace_manager,
+            "Check for updates": lambda: self.check_for_updates(force=True),
+            "Check website health": self.check_website_health,
+        }
+        commands.update({f"Launch preset: {preset.name}": lambda value=preset: self.launch_preset(value)
+                         for preset in self.config.presets})
+        commands.update({f"Open website: {website.name}": lambda value=website: self.open_single(value)
+                         for website in self.config.websites})
+        CommandPalette(self, commands)
+
+    def check_website_health(self) -> None:
+        self.set_status("Checking configured website origins...")
+        def worker():
+            results = [check_url(item.url) for item in self.config.websites if item.enabled]
+            self.after(0, lambda: self._show_health_results(results))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_health_results(self, results) -> None:
+        failures = [f"{item.origin}: {item.status}" for item in results if not item.reachable]
+        message = "All configured website origins are reachable." if not failures else "\n".join(failures)
+        self.set_status(message.replace("\n", "; "))
+        messagebox.showinfo(APP_NAME, message, parent=self)
+
+    def _schedule_tick(self) -> None:
+        if not self.winfo_exists():
+            return
+        online = network_available(timeout=0.25) if any(item.require_network for item in self.config.schedules) else True
+        due = due_schedules(self.config.schedules, self.schedule_state, network_ok=online)
+        if due:
+            save_config(self.config_path, self.config)
+        for schedule in due:
+            preset = next((item for item in self.config.presets if item.name == schedule.preset), None)
+            if preset:
+                self._confirm_scheduled_launch(schedule, preset)
+        self.after(15000, self._schedule_tick)
+
+    def _confirm_scheduled_launch(self, schedule, preset) -> None:
+        if schedule.confirm_seconds == 0:
+            self.launch_preset(preset)
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Scheduled Workspace")
+        dialog.transient(self)
+        dialog.grab_set()
+        remaining = tk.IntVar(value=schedule.confirm_seconds)
+        ttk.Label(dialog, text=f'Scheduled preset "{preset.name}" is ready.', padding=14).pack()
+        label = ttk.Label(dialog, padding=(14, 0, 14, 10))
+        label.pack()
+        buttons = ttk.Frame(dialog, padding=14)
+        buttons.pack(fill="x")
+        cancelled = {"value": False}
+        def cancel():
+            cancelled["value"] = True
+            dialog.destroy()
+        def launch():
+            if dialog.winfo_exists():
+                dialog.destroy()
+            self.launch_preset(preset)
+        ttk.Button(buttons, text="Cancel", command=cancel).pack(side="right")
+        ttk.Button(buttons, text="Launch Now", command=launch, style="Primary.TButton").pack(side="right", padx=5)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        def tick():
+            if cancelled["value"] or not dialog.winfo_exists():
+                return
+            label.configure(text=f"Launching automatically in {remaining.get()} seconds.")
+            if remaining.get() <= 0:
+                launch()
+                return
+            remaining.set(remaining.get() - 1)
+            dialog.after(1000, tick)
+        tick()
+
+    def _ensure_tray(self) -> None:
+        if self.tray:
+            return
+        callbacks = {preset.name: lambda value=preset: self.after(0, lambda: self.launch_preset(value))
+                     for preset in self.config.presets}
+        self.tray = TrayController(
+            lambda: self.after(0, self._show_from_tray),
+            callbacks,
+            lambda: self.after(0, lambda: self.check_for_updates(force=True)),
+            lambda: self.after(0, self.quit_application),
+        )
+        try:
+            self.tray.start()
+        except Exception as exc:
+            logging.warning("System tray unavailable: %s", exc)
+            self.tray = None
+
+    def _show_from_tray(self) -> None:
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def quit_application(self) -> None:
+        if self.tray:
+            self.tray.stop()
+            self.tray = None
+        self._save_window_state()
+        self.destroy()
 
     def center_first_launch(self) -> None:
         self.update_idletasks()
@@ -773,16 +944,35 @@ class WorkLauncherApp(tk.Tk):
             self._set_launch_controls(True)
 
     def on_close(self) -> None:
+        if self.config.settings.minimize_to_tray:
+            self._ensure_tray()
+            self.withdraw()
+            return
+        self.quit_application()
+
+    def _save_window_state(self) -> None:
         self.config.settings.window_width = self.winfo_width()
         self.config.settings.window_height = self.winfo_height()
         if self.config.settings.remember_window_position:
             self.config.settings.window_x = self.winfo_x()
             self.config.settings.window_y = self.winfo_y()
         save_config(self.config_path, self.config)
-        self.destroy()
 
 
 def main() -> int:
-    app = WorkLauncherApp()
-    app.mainloop()
+    lock = SingleInstance(app_data_dir() / "work-launcher.lock")
+    try:
+        lock.acquire()
+    except AlreadyRunningError:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, "Work Launcher is already running.", APP_NAME, 0x40)
+        except Exception:
+            pass
+        return 1
+    try:
+        app = WorkLauncherApp()
+        app.mainloop()
+    finally:
+        lock.release()
     return 0

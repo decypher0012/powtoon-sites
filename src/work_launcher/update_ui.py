@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from .config import save_config
-from .update_download import download_release, updates_dir
+from .update_download import download_release, download_updater, updates_dir
 from .update_models import ReleaseInfo
 from .ui_style import apply_visual_style, style_text
 from .version import __version__
@@ -86,7 +86,8 @@ class UpdateDialog(tk.Toplevel):
                 progress=lambda done, total: self.events.put(("progress", done, total)),
                 cancel_event=self.cancel_event,
             )
-            self.events.put(("complete", path))
+            updater = download_updater(self.release) if self.release.asset_kind == "portable" else None
+            self.events.put(("complete", path, updater))
         except Exception as exc:
             self.events.put(("error", exc))
 
@@ -106,13 +107,13 @@ class UpdateDialog(tk.Toplevel):
                     self.downloading = False
                     self.last_download_path = event[1]
                     if self.install_after_download:
-                        self._install(event[1])
+                        self._install(event[1], event[2])
                     else:
                         path = event[1]
                         self.status.set("Update downloaded and verified. Ready to install.")
                         self.cancel_button.configure(state="disabled")
                         self.remind_button.configure(state="normal")
-                        self.download_button.configure(text="Install Update", state="normal", command=lambda: self._install(path))
+                        self.download_button.configure(text="Install Update", state="normal", command=lambda: self._install(path, event[2]))
                     return
                 else:
                     self.downloading = False
@@ -140,8 +141,8 @@ class UpdateDialog(tk.Toplevel):
         save_config(self.config_path, self.config)
         self.destroy()
 
-    def _install(self, path: Path):
-        updater = Path(sys.executable).with_name("Updater.exe") if getattr(sys, "frozen", False) else Path.cwd() / "dist" / "Updater.exe"
+    def _install(self, path: Path, downloaded_updater: Path | None = None):
+        updater = downloaded_updater or (Path(sys.executable).with_name("Updater.exe") if getattr(sys, "frozen", False) else Path.cwd() / "dist" / "Updater.exe")
         current = Path(sys.executable) if getattr(sys, "frozen", False) else Path.cwd() / "dist" / "WorkLauncher.exe"
         if not updater.is_file():
             messagebox.showerror(self.title(), "Updater.exe was not found beside WorkLauncher.exe.", parent=self)

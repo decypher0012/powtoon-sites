@@ -14,7 +14,7 @@ DEFAULT_MIN_WINDOW_WIDTH = 560
 DEFAULT_MIN_WINDOW_HEIGHT = 520
 DEFAULT_WINDOW_WIDTH = 760
 DEFAULT_WINDOW_HEIGHT = 640
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 UPDATE_GITHUB_OWNER = "decypher0012"
 UPDATE_GITHUB_REPOSITORY = "powtoon-sites"
 VISUAL_STYLES = ("enterprise", "dark", "friendly")
@@ -74,4 +74,4 @@ DEFAULT_WEBSITES = [
 
 
 def app_data_dir() -> Path:
-    return Path.home() / "AppData" / "Local" / APP_FILENAME
+    return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / APP_FILENAME

@@ -14,7 +14,7 @@ import pytest
 from work_launcher.config import default_config,load_config,save_config
 from work_launcher.github_updates import GitHubReleaseClient
 from work_launcher.installation import installation_kind
-from work_launcher.update_download import download_release, verify_download
+from work_launcher.update_download import download_release, download_updater, verify_download
 from work_launcher.update_manager import UpdateManager
 from work_launcher.update_models import (ReleaseInfo, UpdateCancelled, UpdateIntegrityError, UpdateMetadataError,
     UpdateNetworkError, is_newer, parse_version, version_tuple)
@@ -36,6 +36,7 @@ def github_payload(binary=b"new executable", version="1.2.0"):
     release={"tag_name":f"v{version}","draft":False,"prerelease":"-" in version,"html_url":f"https://github.com/o/r/releases/tag/v{version}","assets":[
         {"name":"release.json","browser_download_url":base+"release.json","size":200},
         {"name":"SHA256SUMS.txt","browser_download_url":base+"SHA256SUMS.txt","size":100},
+        {"name":"Updater.exe","browser_download_url":base+"Updater.exe","size":len(binary)},
         {"name":"WorkLauncher.exe","browser_download_url":base+"WorkLauncher.exe","size":len(binary)}]}
     metadata={"version":version,"release_date":"2026-07-15","channel":"beta" if "-" in version else "stable","minimum_supported_version":"1.0.0","mandatory":False,
               "download":{"portable":"WorkLauncher.exe"},"size":{"portable":len(binary)},"sha256":{"portable":digest},"release_notes":["Feature","Fix"]}
@@ -56,10 +57,11 @@ def test_github_release_check_stable_and_beta():
     release,metadata,digest,base=github_payload()
     mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),
              "https://api.github.com/repos/o/r/releases?per_page=100&page=1":json.dumps([dict(release,draft=False)]).encode(),
-             base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n".encode()}
+             base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{digest}  Updater.exe\n".encode()}
     opener=lambda request,timeout=0: Response(mapping[request.full_url])
     stable=GitHubReleaseClient(opener).check("o","r","stable"); beta=GitHubReleaseClient(opener).check("o","r","beta")
     assert stable.version==beta.version=="1.2.0"; assert stable.release_notes==("Feature","Fix")
+    assert stable.updater_name=="Updater.exe";assert stable.updater_sha256==digest;assert stable.updater_size==len(b"new executable")
 
 
 def test_installer_asset_selection_when_published():
@@ -68,7 +70,7 @@ def test_installer_asset_selection_when_published():
     metadata["size"]["installer"]=len(installer)
     release["assets"].append({"name":"WorkLauncher-Setup.exe","browser_download_url":base+"WorkLauncher-Setup.exe","size":len(installer)})
     mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),base+"release.json":json.dumps(metadata).encode(),
-             base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{installer_hash}  WorkLauncher-Setup.exe\n".encode()}
+             base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{digest}  Updater.exe\n{installer_hash}  WorkLauncher-Setup.exe\n".encode()}
     result=GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r","stable","installer")
     assert result.asset_kind=="installer";assert result.asset_name=="WorkLauncher-Setup.exe"
 
@@ -76,7 +78,7 @@ def test_installer_asset_selection_when_published():
 def test_installed_mode_requires_installer_asset_without_portable_fallback():
     release,metadata,digest,base=github_payload()
     mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),base+"release.json":json.dumps(metadata).encode(),
-             base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n".encode()}
+             base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{digest}  Updater.exe\n".encode()}
     with pytest.raises(UpdateMetadataError,match="required installer"):
         GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r","stable","installer")
 
@@ -96,7 +98,7 @@ def test_invalid_or_missing_release_metadata(mutation):
     if mutation=="missing_metadata": release["assets"]=release["assets"][1:]
     if mutation=="missing_asset": release["assets"]=release["assets"][:2]
     if mutation=="bad_sha": metadata["sha256"]["portable"]="bad"
-    sums=("0"*64 if mutation=="mismatched_sums" else digest)+"  WorkLauncher.exe\n"
+    sums=("0"*64 if mutation=="mismatched_sums" else digest)+"  WorkLauncher.exe\n"+f"{digest}  Updater.exe\n"
     mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":sums.encode()}
     with pytest.raises(UpdateMetadataError): GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r")
 
@@ -134,18 +136,30 @@ def test_explicit_release_schema_rejects_dangerous_metadata(mutation):
     elif mutation=="unsafe_name": metadata["download"]["portable"]="../evil.exe"
     elif mutation=="wrong_size": metadata["size"]["portable"]+=1
     elif mutation=="bad_type": metadata["mandatory"]="false"
-    mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n".encode()}
+    mapping={"https://api.github.com/repos/o/r/releases/latest":json.dumps(release).encode(),base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{digest}  Updater.exe\n".encode()}
     with pytest.raises(UpdateMetadataError): GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r")
 
 
 def test_beta_selects_highest_non_draft_prerelease_and_stable_channel_rejects_prerelease():
     low,_,_,_=github_payload(version="1.1.0-beta.1"); high,metadata,digest,base=github_payload(version="1.1.0-beta.2"); draft,_,_,_=github_payload(version="9.0.0-beta.1");draft["draft"]=True
-    mapping={"https://api.github.com/repos/o/r/releases?per_page=100&page=1":json.dumps([low,draft,high]).encode(),base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n".encode()}
+    mapping={"https://api.github.com/repos/o/r/releases?per_page=100&page=1":json.dumps([low,draft,high]).encode(),base+"release.json":json.dumps(metadata).encode(),base+"SHA256SUMS.txt":f"{digest}  WorkLauncher.exe\n{digest}  Updater.exe\n".encode()}
     assert GitHubReleaseClient(lambda req,timeout=0:Response(mapping[req.full_url])).check("o","r","beta").version=="1.1.0-beta.2"
 
 
 def release_info(data=b"payload"):
     return ReleaseInfo("2.0.0","2026-07-15","1.0.0",False,"WorkLauncher.exe","https://github.com/o/r/WorkLauncher.exe",hashlib.sha256(data).hexdigest(),len(data),("Notes",))
+
+
+def test_downloads_verified_release_updater(tmp_path, monkeypatch):
+    data=b"new updater";digest=hashlib.sha256(data).hexdigest()
+    release=ReleaseInfo("2.0.0","2026-07-15","1.0.0",False,"WorkLauncher.exe",
+        "https://github.com/o/r/releases/download/v2/WorkLauncher.exe","0"*64,1,(),
+        updater_name="Updater.exe",updater_url="https://github.com/o/r/releases/download/v2/Updater.exe",
+        updater_sha256=digest,updater_size=len(data))
+    monkeypatch.setenv("LOCALAPPDATA",str(tmp_path))
+    path=download_updater(release,opener=lambda *args,**kwargs:Response(
+        data,{"Content-Length":str(len(data))},"https://objects.githubusercontent.com/release-asset"))
+    assert path.name=="Updater-2.0.0.exe";assert path.read_bytes()==data
 
 
 def test_download_progress_size_and_sha_verification():

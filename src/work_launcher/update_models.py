@@ -25,6 +25,10 @@ class ReleaseInfo:
     release_notes: tuple[str, ...]
     html_url: str = ""
     asset_kind: str = "portable"
+    updater_name: str = ""
+    updater_url: str = ""
+    updater_sha256: str = ""
+    updater_size: int = 0
 
 
 SEMVER = re.compile(r"^(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$")

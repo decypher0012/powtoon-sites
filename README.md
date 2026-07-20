@@ -1,6 +1,14 @@
 # Work Launcher
 
-Work Launcher is a lightweight Windows Tkinter app that opens six work websites in configured browser profiles. It stores configuration at `%APPDATA%\WorkLauncher\config.json`, rotating logs at `%LOCALAPPDATA%\WorkLauncher\logs\`, and never reads or modifies browser data or credentials.
+Work Launcher is a Windows workspace launcher for websites, local applications, documents, presets, and scheduled routines. It stores configuration at `%APPDATA%\WorkLauncher\config.json`, rotating logs at `%LOCALAPPDATA%\WorkLauncher\logs\`, and never reads or modifies browser data or credentials.
+
+## Workspaces, applications, and automation
+
+Use **Manage Workspaces** to add local applications or documents, combine them with websites into ordered presets, and schedule presets by weekday and time. Executables launch with an argument list and `shell=False`; documents use their registered Windows file association. The **Workspace Preset** control runs a preset immediately and writes a bounded session report under `%LOCALAPPDATA%\WorkLauncher\Reports\`.
+
+Press **Ctrl+K** for the command palette. It can open websites, launch presets, manage workspaces, check website-origin health, or check for updates. Enable **Minimize to notification area when closed** in Settings for tray access to presets and update checks.
+
+Schedules run at most once per local calendar day and request confirmation before launching. A schedule can require basic network connectivity. Optional organization policy at `%PROGRAMDATA%\WorkLauncher\policy.json` can add required websites, restrict allowed domains, disable local application entries, and lock the update channel.
 
 ## GitHub Releases and updates
 
@@ -42,7 +50,7 @@ Stable publishing uses a stable SemVer tag such as `v1.0.1`; beta publishing use
 
 This integrity model detects corruption and inconsistent release assets, but it does not establish publisher identity equivalent to Authenticode or independently signed metadata. Current binaries are unsigned and Windows SmartScreen may warn on first use. A future signing path is to obtain an organization-controlled Authenticode certificate, protect signing credentials in a restricted release environment, sign both executables before checksum generation, and verify signatures in the updater. Do not add signing claims until that pipeline exists and is validated.
 
-Installed copies require the `WorkLauncher-Setup.exe` metadata entries. The standalone updater verifies the installer, waits for the authenticated Work Launcher process to exit, and launches it silently with `shell=False`. It never falls back to the portable asset when the required installer asset is missing. Portable copies continue to use the built-in executable backup and rollback transaction.
+Installed copies require the `WorkLauncher-Setup.exe` metadata entries. The standalone updater verifies the installer, waits for the authenticated Work Launcher process to exit, and launches it silently with `shell=False`. It never falls back to the portable asset when the required installer asset is missing. Portable updates derive the new `Updater.exe` size from GitHub and its checksum from `SHA256SUMS.txt`, launch that verified copy, and then use the executable backup and rollback transaction. The unchanged `release.json` schema remains compatible with existing 1.0.x clients.
 
 ## Windows installer
 
