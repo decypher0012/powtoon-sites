@@ -8,27 +8,35 @@ from .constants import DEFAULT_VISUAL_STYLE
 
 VISUAL_PRESETS: dict[str, dict[str, str]] = {
     "enterprise": {
-        "bg": "#f4f7fb",
+        "bg": "#f0fdfa",
         "card": "#ffffff",
-        "text": "#122033",
-        "muted": "#5f6b7a",
-        "accent": "#1f6feb",
-        "accent_hover": "#1b5fcc",
-        "accent_active": "#174ea6",
+        "surface_alt": "#e6f7f4",
+        "sidebar": "#083b3a",
+        "sidebar_text": "#d9fffa",
+        "text": "#134e4a",
+        "muted": "#526b69",
+        "primary": "#0d9488",
+        "accent": "#c2410c",
+        "accent_hover": "#9a3412",
+        "accent_active": "#7c2d12",
         "accent_text": "#ffffff",
-        "border": "#d5deea",
-        "selection": "#dbeafe",
-        "danger": "#b42318",
+        "border": "#99d8d1",
+        "selection": "#ccfbf1",
+        "danger": "#b91c1c",
     },
     "dark": {
         "bg": "#111827",
         "card": "#1f2937",
+        "surface_alt": "#263747",
+        "sidebar": "#071f22",
+        "sidebar_text": "#ccfbf1",
         "text": "#e5e7eb",
         "muted": "#9ca3af",
-        "accent": "#38bdf8",
-        "accent_hover": "#0ea5e9",
-        "accent_active": "#0284c7",
-        "accent_text": "#08111f",
+        "primary": "#2dd4bf",
+        "accent": "#fb923c",
+        "accent_hover": "#fdba74",
+        "accent_active": "#f97316",
+        "accent_text": "#111827",
         "border": "#334155",
         "selection": "#1d4ed8",
         "danger": "#f87171",
@@ -36,9 +44,13 @@ VISUAL_PRESETS: dict[str, dict[str, str]] = {
     "friendly": {
         "bg": "#f9f5ef",
         "card": "#fffdf8",
+        "surface_alt": "#f4eadc",
+        "sidebar": "#3d2d22",
+        "sidebar_text": "#fff7ed",
         "text": "#2b241d",
         "muted": "#6d6257",
-        "accent": "#d97706",
+        "primary": "#b45309",
+        "accent": "#c2410c",
         "accent_hover": "#c26b05",
         "accent_active": "#a85c04",
         "accent_text": "#ffffff",
@@ -65,21 +77,28 @@ def apply_visual_style(root: tk.Misc, preset: str = DEFAULT_VISUAL_STYLE) -> dic
     style.configure(".", background=palette["bg"], foreground=palette["text"])
     style.configure("TFrame", background=palette["bg"])
     style.configure("Card.TFrame", background=palette["card"])
+    style.configure("Surface.TFrame", background=palette["surface_alt"])
+    style.configure("Sidebar.TFrame", background=palette["sidebar"])
     style.configure("Row.TFrame", background=palette["card"], bordercolor=palette["border"], relief="solid", borderwidth=1)
     style.configure("TLabel", background=palette["bg"], foreground=palette["text"])
     style.configure("Card.TLabel", background=palette["card"], foreground=palette["text"])
+    style.configure("Sidebar.TLabel", background=palette["sidebar"], foreground=palette["sidebar_text"])
+    style.configure("SidebarBrand.TLabel", background=palette["sidebar"], foreground="#ffffff", font=("Segoe UI", 16, "bold"))
+    style.configure("Eyebrow.TLabel", background=palette["card"], foreground=palette["primary"], font=("Segoe UI", 9, "bold"))
     style.configure("Header.TLabel", background=palette["bg"], foreground=palette["text"], font=("Segoe UI", 16, "bold"))
-    style.configure("DashboardHeader.TLabel", background=palette["card"], foreground=palette["text"], font=("Segoe UI", 20, "bold"))
+    style.configure("DashboardHeader.TLabel", background=palette["card"], foreground=palette["text"], font=("Segoe UI", 22, "bold"))
     style.configure("DashboardSubtitle.TLabel", background=palette["card"], foreground=palette["muted"], font=("Segoe UI", 10))
     style.configure("RowTitle.TLabel", background=palette["card"], foreground=palette["text"], font=("Segoe UI", 11, "bold"))
     style.configure("RowMeta.TLabel", background=palette["card"], foreground=palette["muted"], font=("Segoe UI", 9))
     style.configure("Footer.TLabel", background=palette["card"], foreground=palette["muted"], font=("Segoe UI", 9))
     style.configure("Section.TLabel", background=palette["bg"], foreground=palette["text"], font=("Segoe UI", 12, "bold"))
     style.configure("CardSection.TLabel", background=palette["card"], foreground=palette["text"], font=("Segoe UI", 12, "bold"))
+    style.configure("StatValue.TLabel", background=palette["surface_alt"], foreground=palette["text"], font=("Segoe UI", 18, "bold"))
+    style.configure("StatLabel.TLabel", background=palette["surface_alt"], foreground=palette["muted"], font=("Segoe UI", 9))
     style.configure("Muted.TLabel", background=palette["bg"], foreground=palette["muted"])
     style.configure("TLabelframe", background=palette["bg"], bordercolor=palette["border"], relief="groove")
     style.configure("TLabelframe.Label", background=palette["bg"], foreground=palette["text"], font=("Segoe UI", 10, "bold"))
-    style.configure("TButton", padding=(10, 6))
+    style.configure("TButton", padding=(10, 7), focuscolor=palette["primary"], focusthickness=2)
     style.configure("Compact.TButton", padding=(9, 4))
     style.configure("Secondary.TButton", background=palette["card"], foreground=palette["text"], padding=(11, 7), borderwidth=1)
     style.map("Secondary.TButton", background=[("active", palette["selection"]), ("pressed", palette["border"])])
@@ -91,12 +110,16 @@ def apply_visual_style(root: tk.Misc, preset: str = DEFAULT_VISUAL_STYLE) -> dic
         background=[("pressed", palette["accent_active"]), ("active", palette["accent_hover"]), ("disabled", palette["border"])],
         foreground=[("disabled", palette["muted"])],
     )
+    style.configure("Nav.TButton", background=palette["sidebar"], foreground=palette["sidebar_text"], padding=(16, 11), borderwidth=0, anchor="w")
+    style.map("Nav.TButton", background=[("active", palette["primary"]), ("pressed", palette["primary"])], foreground=[("active", "#ffffff")])
+    style.configure("NavPrimary.TButton", background=palette["primary"], foreground="#ffffff", padding=(16, 11), borderwidth=0, anchor="w")
+    style.map("NavPrimary.TButton", background=[("active", palette["primary"]), ("pressed", palette["primary"])])
     style.configure("TCheckbutton", background=palette["bg"], foreground=palette["text"])
     style.configure("Card.TCheckbutton", background=palette["card"], foreground=palette["text"])
     style.map("Card.TCheckbutton", background=[("active", palette["card"])])
     style.configure("TRadiobutton", background=palette["bg"], foreground=palette["text"])
-    style.configure("TEntry", fieldbackground=palette["card"], foreground=palette["text"])
-    style.configure("TCombobox", fieldbackground=palette["card"], background=palette["card"], foreground=palette["text"])
+    style.configure("TEntry", fieldbackground=palette["card"], foreground=palette["text"], padding=(8, 6))
+    style.configure("TCombobox", fieldbackground=palette["card"], background=palette["card"], foreground=palette["text"], padding=(6, 5))
     style.configure("TProgressbar", troughcolor=palette["border"], background=palette["accent"])
     style.configure("Treeview", background=palette["card"], fieldbackground=palette["card"], foreground=palette["text"], bordercolor=palette["border"])
     style.configure("Treeview.Heading", background=palette["bg"], foreground=palette["text"], relief="flat")

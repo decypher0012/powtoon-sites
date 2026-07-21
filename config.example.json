@@ -1,5 +1,5 @@
 {
-  "config_version": 7,
+  "config_version": 8,
   "settings": {
     "launch_delay_seconds": 0.5,
     "duplicate_launch_cooldown_seconds": 5.0,

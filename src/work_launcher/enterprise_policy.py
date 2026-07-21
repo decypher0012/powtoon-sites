@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import AppConfig, ConfigError, WebsiteConfig
+from .config import AppConfig, ConfigError, WebsiteConfig, get_config_dir
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,8 @@ def default_policy_path() -> Path:
 
 def load_policy(path: Path | None = None) -> EnterprisePolicy:
     path = path or default_policy_path()
+    if not path.is_file() and path == default_policy_path():
+        path = get_config_dir() / "organization-policy.json"
     if not path.is_file():
         return EnterprisePolicy()
     data = json.loads(path.read_text(encoding="utf-8"))

@@ -8,6 +8,99 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from .config import (ApplicationConfig, PresetConfig, ScheduleConfig, config_to_dict,
                      save_config, validate_config_data)
 from .windows_tasks import sync_tasks
+from .ui_style import style_listbox
+
+
+class PresetEditor(tk.Toplevel):
+    def __init__(self, master, choices, preset=None):
+        super().__init__(master); self.title("Visual Workspace Builder"); self.geometry("820x520")
+        self.transient(master); self.grab_set(); self.result = None; self.choices = choices
+        self.name_var = tk.StringVar(value=preset.name if preset else "")
+        self.mode_var = tk.StringVar(value=preset.run_mode if preset else "normal")
+        self.stop_var = tk.BooleanVar(value=preset.stop_on_failure if preset else False)
+        top = ttk.Frame(self, padding=12); top.pack(fill="x")
+        ttk.Label(top, text="Preset name").pack(side="left"); ttk.Entry(top, textvariable=self.name_var, width=28).pack(side="left", padx=6)
+        ttk.Label(top, text="Run mode").pack(side="left", padx=(14, 4))
+        ttk.Combobox(top, textvariable=self.mode_var, values=["normal", "dry-run", "step"], state="readonly", width=10).pack(side="left")
+        ttk.Checkbutton(top, text="Stop after a failure", variable=self.stop_var).pack(side="left", padx=14)
+        body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
+        self.available = tk.Listbox(body); self.available.pack(side="left", fill="both", expand=True)
+        controls = ttk.Frame(body); controls.pack(side="left", padx=8)
+        ttk.Button(controls, text="Add →", command=self.add).pack(fill="x", pady=3)
+        ttk.Button(controls, text="← Remove", command=self.remove).pack(fill="x", pady=3)
+        ttk.Button(controls, text="Move Up", command=lambda: self.move(-1)).pack(fill="x", pady=(20, 3))
+        ttk.Button(controls, text="Move Down", command=lambda: self.move(1)).pack(fill="x", pady=3)
+        ttk.Button(controls, text="Item Delay", command=self.delay).pack(fill="x", pady=(20, 3))
+        ttk.Button(controls, text="Item Rules", command=self.rules).pack(fill="x", pady=3)
+        self.selected = tk.Listbox(body); self.selected.pack(side="left", fill="both", expand=True)
+        style_listbox(self.available, master.master_app.palette if hasattr(master, "master_app") else master.palette)
+        style_listbox(self.selected, master.master_app.palette if hasattr(master, "master_app") else master.palette)
+        for value in choices: self.available.insert("end", value)
+        self.delays = dict(preset.item_delays) if preset else {}
+        self.item_rules = copy.deepcopy(preset.item_rules) if preset else {}
+        for value in (preset.items if preset else []): self.selected.insert("end", value)
+        footer = ttk.Frame(self, padding=12); footer.pack(fill="x")
+        ttk.Button(footer, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(footer, text="Save Workspace", command=self.accept, style="Primary.TButton").pack(side="right", padx=6)
+
+    def add(self):
+        for index in self.available.curselection():
+            value = self.available.get(index)
+            if value not in self.selected.get(0, "end"): self.selected.insert("end", value)
+    def remove(self):
+        for index in reversed(self.selected.curselection()): self.selected.delete(index)
+    def move(self, direction):
+        if not self.selected.curselection(): return
+        index = self.selected.curselection()[0]; target = index + direction
+        if not 0 <= target < self.selected.size(): return
+        value = self.selected.get(index); self.selected.delete(index); self.selected.insert(target, value); self.selected.selection_set(target)
+    def delay(self):
+        if not self.selected.curselection(): return
+        value = self.selected.get(self.selected.curselection()[0])
+        seconds = simpledialog.askfloat("Item Delay", "Seconds to wait before this item:", initialvalue=self.delays.get(value, 0), minvalue=0, parent=self)
+        if seconds is not None: self.delays[value] = seconds
+    def rules(self):
+        if not self.selected.curselection(): return
+        value = self.selected.get(self.selected.curselection()[0]); current = self.item_rules.get(value, {})
+        require_network = messagebox.askyesno("Item Rules", "Require basic network connectivity for this item?", parent=self)
+        weekdays = simpledialog.askstring("Item Rules", "Allowed weekdays (0=Mon … 6=Sun), comma separated:",
+                                          initialvalue=",".join(map(str, current.get("weekdays", range(7)))), parent=self)
+        try: parsed = list(dict.fromkeys(int(day.strip()) for day in (weekdays or "").split(",") if day.strip()))
+        except ValueError: messagebox.showerror(self.title(), "Weekdays must be numbers from 0 through 6.", parent=self); return
+        if not parsed or any(day not in range(7) for day in parsed): messagebox.showerror(self.title(), "Select at least one valid weekday.", parent=self); return
+        self.item_rules[value] = {"require_network": require_network, "weekdays": parsed}
+    def accept(self):
+        name, items = self.name_var.get().strip(), list(self.selected.get(0, "end"))
+        if not name or not items: messagebox.showerror(self.title(), "Enter a name and add at least one item.", parent=self); return
+        self.result = PresetConfig(name, items, run_mode=self.mode_var.get(), stop_on_failure=self.stop_var.get(),
+                                   item_delays={key: value for key, value in self.delays.items() if key in items},
+                                   item_rules={key: value for key, value in self.item_rules.items() if key in items})
+        self.destroy()
+
+
+class ScheduleEditor(tk.Toplevel):
+    DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    def __init__(self, master, presets, schedule=None):
+        super().__init__(master); self.title("Advanced Schedule"); self.transient(master); self.grab_set(); self.result = None
+        self.name = tk.StringVar(value=schedule.name if schedule else ""); self.preset = tk.StringVar(value=schedule.preset if schedule else presets[0])
+        self.clock = tk.StringVar(value=schedule.time if schedule else "09:00"); self.confirm = tk.IntVar(value=schedule.confirm_seconds if schedule else 10)
+        self.network = tk.BooleanVar(value=schedule.require_network if schedule else False); self.enabled = tk.BooleanVar(value=schedule.enabled if schedule else True)
+        frame = ttk.Frame(self, padding=14); frame.pack(fill="both", expand=True)
+        for row, (label, widget) in enumerate((("Name", ttk.Entry(frame, textvariable=self.name)), ("Preset", ttk.Combobox(frame, textvariable=self.preset, values=presets, state="readonly")), ("Time (HH:MM)", ttk.Entry(frame, textvariable=self.clock)), ("Confirmation seconds", ttk.Spinbox(frame, from_=0, to=300, textvariable=self.confirm)))):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
+        current = schedule.weekdays if schedule else list(range(5)); self.days = []
+        days = ttk.Frame(frame); days.grid(row=4, column=0, columnspan=2, sticky="w", pady=8)
+        for index, label in enumerate(self.DAYS):
+            var = tk.BooleanVar(value=index in current); self.days.append(var); ttk.Checkbutton(days, text=label, variable=var).pack(side="left")
+        ttk.Checkbutton(frame, text="Require network", variable=self.network).grid(row=5, column=0, sticky="w")
+        ttk.Checkbutton(frame, text="Enabled", variable=self.enabled).grid(row=5, column=1, sticky="w")
+        ttk.Button(frame, text="Save", command=self.accept, style="Primary.TButton").grid(row=6, column=1, sticky="e", pady=10)
+    def accept(self):
+        weekdays = [index for index, value in enumerate(self.days) if value.get()]
+        if not self.name.get().strip() or not weekdays: messagebox.showerror(self.title(), "Name and at least one weekday are required.", parent=self); return
+        self.result = ScheduleConfig(self.name.get().strip(), self.preset.get(), self.clock.get().strip(), weekdays,
+                                     self.enabled.get(), self.confirm.get(), self.network.get())
+        self.destroy()
 
 
 class WorkspaceManager(tk.Toplevel):
@@ -15,7 +108,11 @@ class WorkspaceManager(tk.Toplevel):
         super().__init__(master)
         self.master_app = master
         self.title("Presets, Applications, and Schedules")
-        self.geometry("720x520")
+        self.geometry("900x620")
+        header = ttk.Frame(self, padding=(18, 16, 18, 4))
+        header.pack(fill="x")
+        ttk.Label(header, text="Workspace studio", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(header, text="Build launch sequences, register local tools, and control recurring routines.", style="Muted.TLabel").pack(anchor="w", pady=(3, 0))
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=12, pady=12)
         self.preset_list = self._page(notebook, "Presets")
@@ -46,6 +143,7 @@ class WorkspaceManager(tk.Toplevel):
         notebook.add(frame, text=title)
         value = tk.Listbox(frame)
         value.pack(fill="both", expand=True)
+        style_listbox(value, self.master_app.palette)
         return value
 
     def refresh(self):
@@ -88,41 +186,24 @@ class WorkspaceManager(tk.Toplevel):
         self._save()
 
     def add_preset(self):
-        name = simpledialog.askstring("Preset", "Preset name:", parent=self)
-        if not name:
-            return
-        if any(item.name.casefold() == name.strip().casefold() for item in self.master_app.config.presets):
-            messagebox.showerror(self.title(), "A preset with that name already exists.", parent=self)
-            return
         choices = ([f"website:{item.name}" for item in self.master_app.config.websites]
                    + [f"application:{item.name}" for item in self.master_app.config.applications])
         if not choices:
             messagebox.showwarning(self.title(), "Add a website or application first.", parent=self)
             return
-        dialog = tk.Toplevel(self)
-        dialog.title("Select preset items")
-        box = tk.Listbox(dialog, selectmode="extended", width=70, height=18)
-        box.pack(padx=12, pady=12)
-        for value in choices:
-            box.insert("end", value)
-        def accept():
-            selected = [choices[index] for index in box.curselection()]
-            if selected:
-                self.master_app.config.presets.append(PresetConfig(name.strip(), selected))
-                self._save()
-                dialog.destroy()
-        ttk.Button(dialog, text="Create Preset", command=accept).pack(pady=(0, 12))
+        dialog = PresetEditor(self, choices); self.wait_window(dialog)
+        if dialog.result:
+            if any(item.name.casefold() == dialog.result.name.casefold() for item in self.master_app.config.presets):
+                messagebox.showerror(self.title(), "A preset with that name already exists.", parent=self); return
+            self.master_app.config.presets.append(dialog.result); self._save()
 
     def add_schedule(self):
         if not self.master_app.config.presets:
             messagebox.showwarning(self.title(), "Create a preset first.", parent=self)
             return
-        name = simpledialog.askstring("Schedule", "Schedule name:", parent=self)
-        preset = simpledialog.askstring("Schedule", "Exact preset name:", parent=self,
-                                        initialvalue=self.master_app.config.presets[0].name)
-        clock = simpledialog.askstring("Schedule", "Time (HH:MM, 24-hour):", parent=self, initialvalue="09:00")
-        if name and preset and clock:
-            self.master_app.config.schedules.append(ScheduleConfig(name.strip(), preset.strip(), clock.strip()))
+        dialog = ScheduleEditor(self, [item.name for item in self.master_app.config.presets]); self.wait_window(dialog)
+        if dialog.result:
+            self.master_app.config.schedules.append(dialog.result)
             try:
                 self._save()
             except Exception as exc:
@@ -165,14 +246,13 @@ class WorkspaceManager(tk.Toplevel):
             return
         _box, collection, _index, item = selected
         old_name = item.name
-        name = simpledialog.askstring("Edit", "Display name:", initialvalue=item.name, parent=self)
-        if not name:
-            return
-        if any(other is not item and other.name.casefold() == name.strip().casefold() for other in collection):
-            messagebox.showerror(self.title(), "That name is already in use.", parent=self); return
         snapshot = copy.deepcopy(self.master_app.config)
-        item.name = name.strip()
         if collection is self.master_app.config.applications:
+            name = simpledialog.askstring("Edit Application", "Display name:", initialvalue=item.name, parent=self)
+            if not name: return
+            if any(other is not item and other.name.casefold() == name.strip().casefold() for other in collection):
+                messagebox.showerror(self.title(), "That name is already in use.", parent=self); return
+            item.name = name.strip()
             path = simpledialog.askstring("Edit Application", "Path:", initialvalue=item.path, parent=self)
             raw = simpledialog.askstring("Edit Application", "Arguments:", initialvalue=shlex.join(item.arguments), parent=self)
             if path: item.path = path.strip()
@@ -181,19 +261,30 @@ class WorkspaceManager(tk.Toplevel):
             for preset in self.master_app.config.presets:
                 preset.items = [new_ref if value == old_ref else value for value in preset.items]
         elif collection is self.master_app.config.presets:
-            delay = simpledialog.askfloat("Edit Preset", "Delay between items (seconds):",
-                                          initialvalue=item.launch_delay_seconds or 0, minvalue=0, parent=self)
-            if delay is not None: item.launch_delay_seconds = delay
+            choices = ([f"website:{value.name}" for value in self.master_app.config.websites]
+                       + [f"application:{value.name}" for value in self.master_app.config.applications])
+            dialog = PresetEditor(self, choices, item); self.wait_window(dialog)
+            if not dialog.result: return
+            if any(other is not item and other.name.casefold() == dialog.result.name.casefold() for other in collection):
+                messagebox.showerror(self.title(), "That name is already in use.", parent=self); return
+            item.name, item.items, item.run_mode = dialog.result.name, dialog.result.items, dialog.result.run_mode
+            item.stop_on_failure, item.item_delays = dialog.result.stop_on_failure, dialog.result.item_delays
+            item.item_rules = dialog.result.item_rules
             for schedule in self.master_app.config.schedules:
                 if schedule.preset == old_name: schedule.preset = item.name
         else:
-            preset = simpledialog.askstring("Edit Schedule", "Preset:", initialvalue=item.preset, parent=self)
-            clock = simpledialog.askstring("Edit Schedule", "Time (HH:MM):", initialvalue=item.time, parent=self)
-            if preset: item.preset = preset.strip()
-            if clock: item.time = clock.strip()
+            dialog = ScheduleEditor(self, [value.name for value in self.master_app.config.presets], item); self.wait_window(dialog)
+            if not dialog.result: return
+            if any(other is not item and other.name.casefold() == dialog.result.name.casefold() for other in collection):
+                messagebox.showerror(self.title(), "That name is already in use.", parent=self); return
+            item.name, item.preset, item.time, item.weekdays = dialog.result.name, dialog.result.preset, dialog.result.time, dialog.result.weekdays
+            item.enabled, item.confirm_seconds, item.require_network = dialog.result.enabled, dialog.result.confirm_seconds, dialog.result.require_network
         try: self._save()
         except Exception as exc:
             self.master_app.config = snapshot
+            self.master_app.workspace_launcher.config = snapshot
+            self.master_app.launcher.browser_profiles = snapshot.browser_profiles
+            self.refresh()
             messagebox.showerror(self.title(), str(exc), parent=self)
 
     def duplicate_selected(self):

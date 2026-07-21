@@ -18,6 +18,14 @@ Use **Sync Windows Tasks** to create per-user Windows tasks for enabled schedule
 
 The Tools menu can import a browser-generated Netscape bookmark HTML export, create or restore validated configuration backups, and open launch history. Settings can enable `Ctrl+Alt+Space` as a system-wide shortcut and enable best-effort launch notifications. Work Launcher does not read live browser bookmark databases.
 
+The visual workspace builder supports ordered items, per-item delays, stop-on-failure, normal launches, dry runs, and step-by-step confirmation. Active preset launches show a cancellable progress window. Dashboard filters cover favorites, enabled state, and tags; websites can use a local image or a built-in icon.
+
+**Repair Center** reports missing local applications, icons, profiles, and preset references. **Configuration Transfer** exports a portable package and identifies machine-specific paths that need repair after import. Selective bookmark import previews every HTTP/HTTPS bookmark before changing configuration.
+
+**Restore Previous Portable Version** stages the existing `.bak` through the same verified updater transaction used for normal portable updates. Installed copies continue to require a trusted previous installer.
+
+Organization administrators can distribute RSA-PSS/SHA-256 signed configuration packages. Create one with `python tools/sign_organization_package.py config.json private-key.pem organization.json` and optionally append `--policy policy.json`; distribute the matching public key separately, and import both through **Import Signed Organization Package**. Work Launcher verifies the signature before merging non-duplicate websites, applications, presets, schedules, browser profiles, and optional policy. Keep the private key outside the repository and build artifacts.
+
 ## GitHub Releases and updates
 
 Work Launcher has a native two-process updater. `WorkLauncher.exe` checks the configured GitHub repository through the GitHub Releases API; it never scrapes release pages. A verified update downloads in the background to `%LOCALAPPDATA%\WorkLauncher\Updates\`, then launches the separate `Updater.exe` and exits. The updater waits for Work Launcher, re-verifies file size and SHA-256, renames the current executable to `WorkLauncher.exe.bak`, installs the new executable, and restarts it. If replacement fails, the backup is restored automatically. Configuration, logs, websites, and browser profiles are not replaced.

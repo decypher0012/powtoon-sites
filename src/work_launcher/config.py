@@ -54,6 +54,10 @@ class PresetConfig:
     name: str
     items: list[str] = field(default_factory=list)
     launch_delay_seconds: float | None = None
+    run_mode: str = "normal"
+    stop_on_failure: bool = False
+    item_delays: dict[str, float] = field(default_factory=dict)
+    item_rules: dict[str, dict[str, Any]] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -278,7 +282,26 @@ def _parse_presets(items: Any, websites: list[WebsiteConfig], applications: list
         delay = item.get("launch_delay_seconds")
         if delay is not None and (not isinstance(delay, (int, float)) or isinstance(delay, bool) or delay < 0):
             raise ConfigError(f"preset.launch_delay_seconds must be non-negative or null for {name}")
-        result.append(PresetConfig(name, references, delay,
+        run_mode = item.get("run_mode", "normal")
+        if run_mode not in {"normal", "dry-run", "step"}:
+            raise ConfigError(f"preset.run_mode must be normal, dry-run, or step for {name}")
+        stop_on_failure = item.get("stop_on_failure", False)
+        if type(stop_on_failure) is not bool:
+            raise ConfigError(f"preset.stop_on_failure must be true or false for {name}")
+        item_delays = item.get("item_delays", {})
+        if (not isinstance(item_delays, dict) or any(key not in references or not isinstance(value, (int, float))
+                or isinstance(value, bool) or value < 0 for key, value in item_delays.items())):
+            raise ConfigError(f"preset.item_delays must map preset items to non-negative seconds for {name}")
+        item_rules = item.get("item_rules", {})
+        if not isinstance(item_rules, dict) or any(key not in references or not isinstance(value, dict) for key, value in item_rules.items()):
+            raise ConfigError(f"preset.item_rules must map preset items to rule objects for {name}")
+        for reference, rule in item_rules.items():
+            if type(rule.get("require_network", False)) is not bool:
+                raise ConfigError(f"preset item rule require_network must be true or false for {name}")
+            weekdays = rule.get("weekdays", list(range(7)))
+            if not isinstance(weekdays, list) or any(type(day) is not int or day not in range(7) for day in weekdays):
+                raise ConfigError(f"preset item rule weekdays must contain 0-6 for {name}")
+        result.append(PresetConfig(name, references, delay, run_mode, stop_on_failure, item_delays, item_rules,
             {key: value for key, value in item.items() if key not in PresetConfig.__dataclass_fields__}))
     return result
 

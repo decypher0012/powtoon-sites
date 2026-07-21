@@ -8,6 +8,8 @@ import tkinter as tk
 import copy
 import queue
 import threading
+import os
+import subprocess
 from datetime import datetime
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
@@ -51,7 +53,10 @@ from .bookmark_import import parse_bookmarks
 from .backup_center import create_backup, automatic_backup, inspect_backup
 from .global_hotkey import GlobalHotkey
 from .notifications import notify
-from .utility_dialogs import LaunchResultsDialog, SessionHistoryDialog
+from .utility_dialogs import LaunchResultsDialog, SelectionDialog, SessionHistoryDialog
+from .productivity_tools import (export_transfer, find_repair_issues, import_transfer,
+                                 merge_organization_package, stage_rollback, verify_organization_package)
+from .update_download import updates_dir
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -76,7 +81,9 @@ class WebsiteDialog(tk.Toplevel):
         fields += (("Local Icon (Optional)", ttk.Entry(frame, textvariable=self.icon_var, width=52)),)
         for row, (label, widget) in enumerate(fields):
             ttk.Label(frame, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
-        ttk.Button(frame, text="Browse", command=self.choose_icon).grid(row=5, column=2, padx=4)
+        icon_actions = ttk.Frame(frame); icon_actions.grid(row=5, column=2, padx=4)
+        ttk.Button(icon_actions, text="Browse", command=self.choose_icon).pack()
+        ttk.Button(icon_actions, text="Library", command=self.choose_builtin_icon).pack(pady=2)
         ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=6, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Selected by Default", variable=self.selected_var).grid(row=7, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Favorite", variable=self.favorite_var).grid(row=8, column=1, sticky="w")
@@ -106,6 +113,10 @@ class WebsiteDialog(tk.Toplevel):
         value = filedialog.askopenfilename(parent=self, title="Choose Website Icon",
                                            filetypes=[("Images", "*.png;*.gif;*.jpg;*.jpeg;*.ico")])
         if value: self.icon_var.set(value)
+
+    def choose_builtin_icon(self):
+        value = simpledialog.askstring("Icon Library", "Choose: work, web, admin, meeting, document", parent=self)
+        if value and value.casefold() in {"work", "web", "admin", "meeting", "document"}: self.icon_var.set("builtin:" + value.casefold())
 
 
 class SettingsWindow(tk.Toplevel):
@@ -621,17 +632,27 @@ class WorkLauncherApp(tk.Tk):
     def _build(self) -> None:
         self.shell = ttk.Frame(self)
         self.shell.pack(fill="both", expand=True)
-        self.dashboard = ttk.Frame(self.shell, padding=20, style="Card.TFrame")
+        self.sidebar = ttk.Frame(self.shell, padding=(14, 22), style="Sidebar.TFrame")
+        ttk.Label(self.sidebar, text="WORK", style="SidebarBrand.TLabel").pack(anchor="w", padx=8)
+        ttk.Label(self.sidebar, text="LAUNCHER", style="Sidebar.TLabel").pack(anchor="w", padx=8, pady=(0, 28))
+        ttk.Button(self.sidebar, text="Dashboard", command=lambda: self.website_canvas.yview_moveto(0), style="NavPrimary.TButton").pack(fill="x", pady=2)
+        ttk.Button(self.sidebar, text="Workspaces", command=self.open_workspace_manager, style="Nav.TButton").pack(fill="x", pady=2)
+        ttk.Button(self.sidebar, text="Launch history", command=self.open_session_history, style="Nav.TButton").pack(fill="x", pady=2)
+        ttk.Button(self.sidebar, text="Repair center", command=self.open_repair_center, style="Nav.TButton").pack(fill="x", pady=2)
+        ttk.Button(self.sidebar, text="Settings", command=self.open_settings, style="Nav.TButton").pack(fill="x", pady=2)
+        ttk.Label(self.sidebar, text="Ctrl+K  Command palette", style="Sidebar.TLabel", wraplength=145).pack(side="bottom", anchor="w", padx=8, pady=8)
+        self.dashboard = ttk.Frame(self.shell, padding=24, style="Card.TFrame")
         self.shell.bind("<Configure>", self._resize_dashboard)
 
         header = ttk.Frame(self.dashboard, style="Card.TFrame")
         header.pack(fill="x")
         title_box = ttk.Frame(header, style="Card.TFrame")
         title_box.pack(side="left", fill="x", expand=True)
-        ttk.Label(title_box, text=APP_NAME, style="DashboardHeader.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="WORKSPACE CONTROL", style="Eyebrow.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="Good to see you", style="DashboardHeader.TLabel").pack(anchor="w", pady=(2, 0))
         ttk.Label(
             title_box,
-            text="Launch your websites, groups, and workspace presets.",
+            text="Everything you need to start a focused work session.",
             style="DashboardSubtitle.TLabel",
         ).pack(anchor="w", pady=(2, 0))
         header_actions = ttk.Frame(header, style="Card.TFrame")
@@ -644,13 +665,17 @@ class WorkLauncherApp(tk.Tk):
             command=self.open_update_diagnostics,
             style="Update.TButton",
         ).pack(side="left", padx=(0, 4))
-        tools = ttk.Menubutton(header_actions, text="Tools ▾", style="Secondary.TButton")
+        tools = ttk.Menubutton(header_actions, text="Tools", style="Secondary.TButton")
         tools_menu = tk.Menu(tools, tearoff=False)
         tools_menu.add_command(label="Manage Workspaces", command=self.open_workspace_manager)
         tools_menu.add_command(label="Launch History", command=self.open_session_history)
         tools_menu.add_command(label="Import Browser Bookmarks", command=self.import_bookmarks)
         tools_menu.add_command(label="Backup Configuration", command=self.backup_configuration)
         tools_menu.add_command(label="Restore Configuration", command=self.restore_configuration)
+        tools_menu.add_command(label="Configuration Transfer", command=self.configuration_transfer)
+        tools_menu.add_command(label="Repair Center", command=self.open_repair_center)
+        tools_menu.add_command(label="Import Signed Organization Package", command=self.import_organization_package)
+        tools_menu.add_command(label="Restore Previous Portable Version", command=self.rollback_previous_version)
         tools_menu.add_command(label="Check Website Health", command=self.check_website_health)
         tools_menu.add_command(label="Check for Updates", command=lambda: self.check_for_updates(force=True))
         tools_menu.add_command(label="Release Notes", command=self.open_release_notes)
@@ -661,7 +686,18 @@ class WorkLauncherApp(tk.Tk):
         tools.configure(menu=tools_menu)
         tools.pack(side="left")
 
-        toolbar = ttk.Frame(self.dashboard, padding=(0, 18, 0, 14), style="Card.TFrame")
+        stats = ttk.Frame(self.dashboard, style="Card.TFrame")
+        stats.pack(fill="x", pady=(18, 4))
+        self.website_count_var = tk.StringVar(value="0")
+        self.preset_count_var = tk.StringVar(value="0")
+        self.schedule_count_var = tk.StringVar(value="0")
+        for label, variable in (("ACTIVE WEBSITES", self.website_count_var), ("WORKSPACE PRESETS", self.preset_count_var),
+                                ("ENABLED SCHEDULES", self.schedule_count_var)):
+            card = ttk.Frame(stats, padding=(16, 10), style="Surface.TFrame"); card.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            ttk.Label(card, textvariable=variable, style="StatValue.TLabel").pack(anchor="w")
+            ttk.Label(card, text=label, style="StatLabel.TLabel").pack(anchor="w")
+
+        toolbar = ttk.Frame(self.dashboard, padding=(0, 14, 0, 8), style="Card.TFrame")
         toolbar.pack(fill="x")
         self.open_selected_button = ttk.Button(
             toolbar, text="Open Selected", command=self.open_selected, style="Primary.TButton"
@@ -672,36 +708,52 @@ class WorkLauncherApp(tk.Tk):
         )
         self.open_all_button.pack(side="left", padx=(8, 18))
 
+        self.search_var = tk.StringVar()
+        ttk.Label(toolbar, text="Find", style="Card.TLabel").pack(side="left", padx=(0, 5))
+        search = ttk.Entry(toolbar, textvariable=self.search_var, width=28)
+        search.pack(side="left", fill="x", expand=True)
+        self.search_var.trace_add("write", lambda *_args: self.refresh_ui())
+
+        controls = ttk.Frame(self.dashboard, padding=(0, 0, 0, 12), style="Card.TFrame")
+        controls.pack(fill="x")
+
         self.launch_group_var = tk.StringVar(value="All Websites")
-        ttk.Label(toolbar, text="Group", style="Card.TLabel").pack(side="left", padx=(0, 5))
+        ttk.Label(controls, text="Launch group", style="Card.TLabel").pack(side="left", padx=(0, 5))
         self.launch_group_combo = ttk.Combobox(
-            toolbar, textvariable=self.launch_group_var, state="readonly", width=18
+            controls, textvariable=self.launch_group_var, state="readonly", width=13
         )
         self.launch_group_combo.pack(side="left")
         self.launch_group_button = ttk.Button(
-            toolbar, text="Launch", command=self.open_launch_group, style="Compact.TButton"
+            controls, text="Launch", command=self.open_launch_group, style="Compact.TButton"
         )
-        self.launch_group_button.pack(side="left", padx=(5, 18))
+        self.launch_group_button.pack(side="left", padx=(5, 12))
 
         self.preset_var = tk.StringVar()
-        ttk.Label(toolbar, text="Preset", style="Card.TLabel").pack(side="left", padx=(0, 5))
-        self.preset_combo = ttk.Combobox(toolbar, textvariable=self.preset_var, state="readonly", width=18)
+        ttk.Label(controls, text="Workspace preset", style="Card.TLabel").pack(side="left", padx=(0, 5))
+        self.preset_combo = ttk.Combobox(controls, textvariable=self.preset_var, state="readonly", width=13)
         self.preset_combo.pack(side="left")
         self.launch_preset_button = ttk.Button(
-            toolbar, text="Launch", command=self.launch_selected_preset, style="Compact.TButton"
+            controls, text="Launch", command=self.launch_selected_preset, style="Compact.TButton"
         )
         self.launch_preset_button.pack(side="left", padx=(5, 0))
 
+        self.filter_var = tk.StringVar(value="All")
+        ttk.Label(controls, text="View", style="Card.TLabel").pack(side="left", padx=(12, 5))
+        self.filter_combo = ttk.Combobox(controls, textvariable=self.filter_var, state="readonly", width=10,
+                                         values=["All", "Favorites", "Enabled", "Disabled"])
+        self.filter_combo.pack(side="left"); self.filter_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_ui())
+
         self.website_vars: list[tk.BooleanVar] = []
+        self.displayed_websites: list[WebsiteConfig] = []
         self.site_icons = []
         list_card = ttk.Frame(self.dashboard, padding=14, style="Row.TFrame")
         list_card.pack(fill="both", expand=True)
         list_header = ttk.Frame(list_card, style="Card.TFrame")
         list_header.pack(fill="x", pady=(0, 10))
-        ttk.Label(list_header, text="Websites", style="CardSection.TLabel").pack(side="left")
+        ttk.Label(list_header, text="Your websites", style="CardSection.TLabel").pack(side="left")
         self.selection_summary_var = tk.StringVar(value="0 selected")
         ttk.Label(list_header, textvariable=self.selection_summary_var, style="DashboardSubtitle.TLabel").pack(side="left", padx=10)
-        ttk.Button(list_header, text="+ Add", command=self.add_first_website, style="Compact.TButton").pack(side="right")
+        ttk.Button(list_header, text="Add website", command=self.add_first_website, style="Compact.TButton").pack(side="right")
         ttk.Button(list_header, text="Manage", command=self.open_settings, style="Compact.TButton").pack(side="right", padx=5)
         ttk.Button(list_header, text="Clear", command=self.clear_selection, style="Compact.TButton").pack(side="right")
         ttk.Button(list_header, text="Select all", command=self.select_all, style="Compact.TButton").pack(side="right", padx=5)
@@ -740,10 +792,13 @@ class WorkLauncherApp(tk.Tk):
         self.bind_all("<Control-k>", lambda event: self.open_command_palette())
 
     def _resize_dashboard(self, event) -> None:
-        margin = 20 if event.width >= 900 else 10
-        width = min(max(event.width - (margin * 2), 860), 1100)
-        height = max(event.height - (margin * 2), 560)
-        self.dashboard.place(x=event.width // 2, y=margin, anchor="n", width=width, height=height)
+        sidebar_width = 184 if event.width >= 980 else 156
+        margin = 16 if event.width >= 980 else 8
+        self.sidebar.place(x=0, y=0, width=sidebar_width, height=event.height)
+        available = max(event.width - sidebar_width - (margin * 2), 620)
+        width = min(available, 1180)
+        x = sidebar_width + margin + max((available - width) // 2, 0)
+        self.dashboard.place(x=x, y=margin, width=width, height=max(event.height - margin * 2, 560))
 
     def _scroll_websites(self, event) -> None:
         self.website_canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -773,7 +828,20 @@ class WorkLauncherApp(tk.Tk):
                        style="Primary.TButton").pack(side="left", padx=4)
             ttk.Button(actions, text="Import Configuration", command=self.import_configuration,
                        style="Secondary.TButton").pack(side="left", padx=4)
-        for site in self.config.websites:
+        filter_value = self.filter_var.get() if hasattr(self, "filter_var") else "All"
+        query = self.search_var.get().strip().casefold() if hasattr(self, "search_var") else ""
+        tags = sorted({tag for site in self.config.websites for tag in site.tags}, key=str.casefold)
+        if hasattr(self, "filter_combo"): self.filter_combo.configure(values=["All", "Favorites", "Enabled", "Disabled", *[f"Tag: {tag}" for tag in tags]])
+        self.displayed_websites = [site for site in self.config.websites if
+            (filter_value == "All" or filter_value == "Favorites" and site.favorite or
+             filter_value == "Enabled" and site.enabled or filter_value == "Disabled" and not site.enabled or
+             filter_value.startswith("Tag: ") and filter_value[5:] in site.tags)
+            and (not query or query in " ".join((site.name, site.url, site.launch_group, *site.tags)).casefold())]
+        if self.config.websites and not self.displayed_websites:
+            empty = ttk.Frame(self.website_container, padding=32, style="Card.TFrame"); empty.pack(fill="both", expand=True)
+            ttk.Label(empty, text="No matching websites", style="CardSection.TLabel").pack(pady=(20, 6))
+            ttk.Label(empty, text="Try a different search or view filter.", style="DashboardSubtitle.TLabel").pack()
+        for site in self.displayed_websites:
             row = ttk.Frame(self.website_container, padding=(12, 9), style="Row.TFrame")
             row.pack(fill="x", pady=(0, 7))
             var = tk.BooleanVar(value=site.selected)
@@ -781,7 +849,15 @@ class WorkLauncherApp(tk.Tk):
             ttk.Checkbutton(
                 row, variable=var, command=self._selection_changed, style="Card.TCheckbutton"
             ).pack(side="left", padx=(0, 8))
-            if site.icon_path and Path(site.icon_path).is_file():
+            if site.icon_path.startswith("builtin:"):
+                try:
+                    from PIL import Image, ImageDraw, ImageTk
+                    colors = {"work": "#246b9e", "web": "#16835d", "admin": "#a55b17", "meeting": "#7048a8", "document": "#596579"}
+                    image = Image.new("RGBA", (24, 24), colors.get(site.icon_path[8:], "#246b9e")); draw = ImageDraw.Draw(image)
+                    draw.ellipse((7, 7, 17, 17), outline="white", width=2); icon = ImageTk.PhotoImage(image)
+                    self.site_icons.append(icon); ttk.Label(row, image=icon, style="Card.TLabel").pack(side="left", padx=(0, 8))
+                except Exception: pass
+            elif site.icon_path and Path(site.icon_path).is_file():
                 try:
                     from PIL import Image, ImageTk
                     icon = ImageTk.PhotoImage(Image.open(site.icon_path).convert("RGBA").resize((24, 24)))
@@ -789,7 +865,7 @@ class WorkLauncherApp(tk.Tk):
                 except Exception: pass
             details = ttk.Frame(row, style="Card.TFrame")
             details.pack(side="left", fill="x", expand=True)
-            ttk.Label(details, text=("★ " if site.favorite else "") + site.name, style="RowTitle.TLabel").pack(anchor="w")
+            ttk.Label(details, text=("Favorite · " if site.favorite else "") + site.name, style="RowTitle.TLabel").pack(anchor="w")
             profile = self.config.browser_profiles.get(site.browser_profile)
             metadata = [profile.name if profile else site.browser_profile]
             if site.launch_group:
@@ -799,7 +875,7 @@ class WorkLauncherApp(tk.Tk):
             if not site.enabled:
                 metadata.append("Disabled")
             ttk.Label(details, text="  ·  ".join(metadata), style="RowMeta.TLabel").pack(anchor="w", pady=(2, 0))
-            menu_button = ttk.Menubutton(row, text="⋯", width=3, style="Compact.TButton")
+            menu_button = ttk.Menubutton(row, text="More", style="Compact.TButton")
             item_menu = tk.Menu(menu_button, tearoff=False)
             item_menu.add_command(label="Open", command=lambda s=site: self.open_single(s))
             item_menu.add_command(
@@ -820,6 +896,10 @@ class WorkLauncherApp(tk.Tk):
         self.launch_group_combo.configure(values=["All Websites", *groups])
         if self.launch_group_var.get() not in ["All Websites", *groups]: self.launch_group_var.set("All Websites")
         has_websites = bool(self.config.websites)
+        if hasattr(self, "website_count_var"):
+            self.website_count_var.set(str(sum(site.enabled for site in self.config.websites)))
+            self.preset_count_var.set(str(len(self.config.presets)))
+            self.schedule_count_var.set(str(sum(schedule.enabled for schedule in self.config.schedules)))
         self.open_all_button.configure(state="normal" if has_websites else "disabled")
         self.open_selected_button.configure(state="normal" if has_websites else "disabled")
         self.launch_group_button.configure(state="normal" if has_websites else "disabled")
@@ -828,7 +908,7 @@ class WorkLauncherApp(tk.Tk):
         self.set_status("Ready." if has_websites else "No websites configured. Add or import websites to begin.")
 
     def _selection_changed(self) -> None:
-        selected = sum(var.get() for site, var in zip(self.config.websites, self.website_vars) if site.enabled)
+        selected = sum(var.get() for site, var in zip(self.displayed_websites, self.website_vars) if site.enabled)
         self.selection_summary_var.set(f"{selected} selected")
         self.open_selected_button.configure(state="normal" if selected else "disabled")
 
@@ -932,7 +1012,30 @@ class WorkLauncherApp(tk.Tk):
 
     def launch_preset(self, preset) -> None:
         started = datetime.now().astimezone()
-        results = self.workspace_launcher.launch_preset(preset)
+        cancel_event = threading.Event()
+        progress = tk.Toplevel(self); progress.title(f"Launching — {preset.name}"); progress.transient(self)
+        progress.geometry("430x150"); progress.protocol("WM_DELETE_WINDOW", cancel_event.set)
+        progress_var = tk.StringVar(value=f"Preparing {len(preset.items)} items…")
+        ttk.Label(progress, textvariable=progress_var, padding=18, wraplength=390).pack(fill="x")
+        ttk.Button(progress, text="Cancel Remaining", command=cancel_event.set).pack(pady=8)
+        completed = queue.Queue()
+        def confirm_item(name):
+            response, ready = {"value": False}, threading.Event()
+            def ask(): response["value"] = messagebox.askyesno(APP_NAME, f'Open "{name}"?', parent=progress); ready.set()
+            self.after(0, ask); ready.wait(); return response["value"]
+        def worker():
+            completed.put(self.workspace_launcher.launch_preset(preset, cancel_event, confirm_item))
+        threading.Thread(target=worker, name="workspace-launch", daemon=True).start()
+        def poll():
+            try: results = completed.get_nowait()
+            except queue.Empty:
+                progress_var.set("Cancellation requested…" if cancel_event.is_set() else "Launching workspace items…")
+                progress.after(100, poll); return
+            if progress.winfo_exists(): progress.destroy()
+            self._finish_preset_launch(preset, started, results)
+        poll()
+
+    def _finish_preset_launch(self, preset, started, results) -> None:
         session = create_session(preset.name, started, results)
         report = save_session(session)
         failed = [item.item for item in results if not item.success]
@@ -978,12 +1081,84 @@ class WorkLauncherApp(tk.Tk):
             bookmarks = parse_bookmarks(Path(path)); existing = {item.url.casefold() for item in self.config.websites}
             incoming = [item for item in bookmarks if item.url.casefold() not in existing]
             if not incoming: messagebox.showinfo(APP_NAME, "No new HTTP/HTTPS bookmarks were found.", parent=self); return
-            if not messagebox.askyesno(APP_NAME, f"Import {len(incoming)} new bookmarks?", parent=self): return
+            dialog = SelectionDialog(self, "Select Bookmarks", [f"{item.name} — {item.url}" for item in incoming]); self.wait_window(dialog)
+            if dialog.result is None: return
+            incoming = [incoming[index] for index in dialog.result]
+            if not incoming: return
             profile = next(iter(self.config.browser_profiles))
             self.config.websites.extend(WebsiteConfig(item.name, item.url, browser_profile=profile, tags=["Imported"])
                                         for item in incoming)
             save_config(self.config_path, self.config); self.refresh_ui()
         except Exception as exc: messagebox.showerror(APP_NAME, f"Could not import bookmarks: {exc}", parent=self)
+
+    def configuration_transfer(self) -> None:
+        if messagebox.askyesno(APP_NAME, "Export this PC's configuration? Choose No to import a transfer package.", parent=self):
+            path = filedialog.asksaveasfilename(parent=self, defaultextension=".json", filetypes=[("Transfer package", "*.json")])
+            if path: export_transfer(self.config, Path(path)); messagebox.showinfo(APP_NAME, "Transfer package created.", parent=self)
+            return
+        path = filedialog.askopenfilename(parent=self, filetypes=[("Transfer package", "*.json")])
+        if not path: return
+        try:
+            config, issues = import_transfer(Path(path)); summary = f"Import configuration with {len(issues)} machine-specific item(s) needing repair?"
+            if messagebox.askyesno(APP_NAME, summary, parent=self):
+                automatic_backup(self.config_path, app_data_dir() / "Backups"); self.config = config
+                save_config(self.config_path, config); self.launcher.browser_profiles = config.browser_profiles
+                self.workspace_launcher.config = config; self.refresh_ui(); self.open_repair_center()
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Transfer failed: {exc}", parent=self)
+
+    def open_repair_center(self) -> None:
+        issues = find_repair_issues(self.config)
+        if not issues: messagebox.showinfo("Repair Center", "No broken applications, icons, profiles, or preset items were found.", parent=self); return
+        details = "\n".join(f"• {item.kind}: {item.name} — {item.detail}" for item in issues[:30])
+        changed = False
+        if any(item.kind == "application" for item in issues) and messagebox.askyesno(
+                "Repair Center", details + "\n\nLocate missing applications and documents now?", parent=self):
+            for application in self.config.applications:
+                if not Path(application.path).expanduser().is_file():
+                    replacement = filedialog.askopenfilename(parent=self, title=f"Locate {application.name}")
+                    if replacement: application.path = replacement; changed = True
+        if any(item.kind == "icon" for item in issues) and messagebox.askyesno(
+                "Repair Center", "Clear references to missing custom icons?", parent=self):
+            for site in self.config.websites:
+                if site.icon_path and not site.icon_path.startswith("builtin:") and not Path(site.icon_path).is_file(): site.icon_path = ""; changed = True
+        if changed: save_config(self.config_path, self.config); self.refresh_ui()
+        remaining = find_repair_issues(self.config)
+        if any(item.kind == "profile" for item in remaining) and messagebox.askyesno(
+                "Repair Center", "One or more browser profiles remain unavailable. Open Settings to remap them?", parent=self):
+            self.open_settings()
+        elif remaining: messagebox.showwarning("Repair Center", "Some items still need attention.\n\n" + "\n".join(f"• {i.kind}: {i.name}" for i in remaining), parent=self)
+
+    def import_organization_package(self) -> None:
+        package = filedialog.askopenfilename(parent=self, title="Signed Organization Package", filetypes=[("JSON package", "*.json")])
+        if not package: return
+        public_key = filedialog.askopenfilename(parent=self, title="Organization Public Key", filetypes=[("PEM public key", "*.pem")])
+        if not public_key: return
+        try:
+            verified = verify_organization_package(Path(package), Path(public_key))
+            if not messagebox.askyesno(APP_NAME, "The package signature is valid. Import its approved configuration?", parent=self): return
+            automatic_backup(self.config_path, app_data_dir() / "Backups"); self.config = merge_organization_package(self.config, verified)
+            if "policy" in verified:
+                policy_path = self.config_path.parent / "organization-policy.json"
+                policy_temp = policy_path.with_suffix(".json.tmp")
+                policy_temp.write_text(json.dumps(verified["policy"], indent=2) + "\n", encoding="utf-8")
+                os.replace(policy_temp, policy_path)
+                apply_policy(self.config, load_policy(policy_path))
+            save_config(self.config_path, self.config); self.workspace_launcher.config = self.config; self.refresh_ui()
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Package signature or contents are invalid: {exc}", parent=self)
+
+    def rollback_previous_version(self) -> None:
+        if not getattr(sys, "frozen", False): messagebox.showinfo(APP_NAME, "Rollback is available in the packaged portable application.", parent=self); return
+        if self.config.updates.installation_kind != "portable": messagebox.showinfo(APP_NAME, "Installed copies should rerun a previous trusted installer.", parent=self); return
+        if not messagebox.askyesno(APP_NAME, "Restore the verified local backup of the previous portable version?", parent=self): return
+        try:
+            current = Path(sys.executable); staged, digest, size = stage_rollback(current, updates_dir())
+            updater = current.with_name("Updater.exe")
+            if not updater.is_file(): raise FileNotFoundError("Updater.exe was not found beside WorkLauncher.exe.")
+            ready = updates_dir() / f"rollback-{os.getpid()}.ready"; ready.unlink(missing_ok=True)
+            subprocess.Popen([str(updater), "--current", str(current), "--download", str(staged), "--sha256", digest,
+                              "--size", str(size), "--parent-pid", str(os.getpid()), "--ready-file", str(ready)], shell=False)
+            self.after(800, self.quit_application)
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Rollback could not start: {exc}", parent=self)
 
     def open_command_palette(self) -> None:
         commands = {
@@ -1028,6 +1203,9 @@ class WorkLauncherApp(tk.Tk):
         self.after(15000, self._schedule_tick)
 
     def _confirm_scheduled_launch(self, schedule, preset) -> None:
+        if self.config.settings.notifications:
+            if not (self.tray and self.tray.notify(f'{preset.name} is ready. Open Work Launcher to launch, snooze, or cancel.', "Scheduled Workspace")):
+                notify("Scheduled Workspace", f"{preset.name} is ready")
         if schedule.confirm_seconds == 0:
             self.launch_preset(preset)
             return
@@ -1049,7 +1227,12 @@ class WorkLauncherApp(tk.Tk):
             if dialog.winfo_exists():
                 dialog.destroy()
             self.launch_preset(preset)
+        def snooze():
+            cancelled["value"] = True; dialog.destroy()
+            self.set_status(f'Scheduled preset "{preset.name}" snoozed for 5 minutes.')
+            self.after(5 * 60 * 1000, lambda: self._confirm_scheduled_launch(schedule, preset))
         ttk.Button(buttons, text="Cancel", command=cancel).pack(side="right")
+        ttk.Button(buttons, text="Snooze 5 min", command=snooze).pack(side="right", padx=5)
         ttk.Button(buttons, text="Launch Now", command=launch, style="Primary.TButton").pack(side="right", padx=5)
         dialog.protocol("WM_DELETE_WINDOW", cancel)
         def tick():
@@ -1126,7 +1309,7 @@ class WorkLauncherApp(tk.Tk):
 
     def _selected_websites(self) -> list[WebsiteConfig]:
         selected = []
-        for site, var in zip(self.config.websites, self.website_vars):
+        for site, var in zip(self.displayed_websites, self.website_vars):
             site.selected = var.get()
             if site.selected and site.enabled:
                 selected.append(site)
@@ -1134,7 +1317,7 @@ class WorkLauncherApp(tk.Tk):
         return selected
 
     def select_all(self) -> None:
-        for site, var in zip(self.config.websites, self.website_vars):
+        for site, var in zip(self.displayed_websites, self.website_vars):
             var.set(site.enabled)
         self._selected_websites()
         self._selection_changed()
@@ -1220,7 +1403,7 @@ class WorkLauncherApp(tk.Tk):
 
     def _set_launch_controls(self, enabled: bool) -> None:
         has_websites = any(site.enabled for site in self.config.websites)
-        has_selection = any(site.enabled and var.get() for site, var in zip(self.config.websites, self.website_vars))
+        has_selection = any(site.enabled and var.get() for site, var in zip(self.displayed_websites, self.website_vars))
         self.open_all_button.configure(state="normal" if enabled and has_websites else "disabled")
         self.open_selected_button.configure(state="normal" if enabled and has_selection else "disabled")
         self.launch_group_button.configure(state="normal" if enabled and has_websites else "disabled")

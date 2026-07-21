@@ -6,6 +6,22 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from .session_report import reports_dir
+from .ui_style import style_listbox, style_text
+
+
+class SelectionDialog(tk.Toplevel):
+    def __init__(self, master, title, labels):
+        super().__init__(master); self.title(title); self.geometry("650x500"); self.transient(master); self.grab_set(); self.result = None
+        ttk.Label(self, text="Select the items to import:", padding=12).pack(anchor="w")
+        self.box = tk.Listbox(self, selectmode="extended"); self.box.pack(fill="both", expand=True, padx=12)
+        style_listbox(self.box, master.palette)
+        for label in labels: self.box.insert("end", label)
+        self.box.selection_set(0, "end")
+        buttons = ttk.Frame(self, padding=12); buttons.pack(fill="x")
+        ttk.Button(buttons, text="Select All", command=lambda: self.box.selection_set(0, "end")).pack(side="left")
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="Continue", command=self.accept, style="Primary.TButton").pack(side="right", padx=5)
+    def accept(self): self.result = list(self.box.curselection()); self.destroy()
 
 
 class SessionHistoryDialog(tk.Toplevel):
@@ -15,6 +31,7 @@ class SessionHistoryDialog(tk.Toplevel):
         frame = ttk.Frame(self, padding=12); frame.pack(fill="both", expand=True)
         self.listbox = tk.Listbox(frame, width=45); self.listbox.pack(side="left", fill="both", expand=True)
         self.details = tk.Text(frame, width=52, state="disabled", wrap="word"); self.details.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        style_listbox(self.listbox, master.palette); style_text(self.details, master.palette)
         self.listbox.bind("<<ListboxSelect>>", self.show_selected)
         buttons = ttk.Frame(self); buttons.pack(fill="x", padx=12, pady=(0, 12))
         ttk.Button(buttons, text="Delete Selected", command=self.delete_selected).pack(side="left")
