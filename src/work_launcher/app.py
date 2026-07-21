@@ -47,6 +47,11 @@ from .workspace_dialogs import WorkspaceManager
 from .workspace_launcher import WorkspaceLauncher, network_available
 from .single_instance import AlreadyRunningError, SingleInstance
 from .constants import app_data_dir
+from .bookmark_import import parse_bookmarks
+from .backup_center import create_backup, automatic_backup, inspect_backup
+from .global_hotkey import GlobalHotkey
+from .notifications import notify
+from .utility_dialogs import LaunchResultsDialog, SessionHistoryDialog
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -56,6 +61,9 @@ class WebsiteDialog(tk.Toplevel):
         self.name_var = tk.StringVar(value=website.name); self.url_var = tk.StringVar(value=website.url)
         self.enabled_var = tk.BooleanVar(value=website.enabled); self.selected_var = tk.BooleanVar(value=website.selected)
         self.group_var = tk.StringVar(value=website.launch_group)
+        self.favorite_var = tk.BooleanVar(value=website.favorite)
+        self.tags_var = tk.StringVar(value=", ".join(website.tags))
+        self.icon_var = tk.StringVar(value=website.icon_path)
         self.profile_names = {profile.name: key for key, profile in profiles.items()}
         current = profiles.get(website.browser_profile); self.profile_var = tk.StringVar(value=current.name if current else "")
         frame = ttk.Frame(self, padding=14, style="Card.TFrame"); frame.pack(fill="both", expand=True)
@@ -63,13 +71,17 @@ class WebsiteDialog(tk.Toplevel):
                   ("URL", ttk.Entry(frame, textvariable=self.url_var, width=52)),
                   ("Browser Profile", ttk.Combobox(frame, textvariable=self.profile_var, values=list(self.profile_names), state="readonly", width=49)),
                   ("Launch Group (Optional)", ttk.Combobox(frame, textvariable=self.group_var,
-                    values=["", "Daily Work", "Morning", "Meetings", "Admin", "Research", "Custom"], width=49)))
+                    values=["", "Daily Work", "Morning", "Meetings", "Admin", "Research", "Custom"], width=49)),
+                  ("Tags (comma separated)", ttk.Entry(frame, textvariable=self.tags_var, width=52)))
+        fields += (("Local Icon (Optional)", ttk.Entry(frame, textvariable=self.icon_var, width=52)),)
         for row, (label, widget) in enumerate(fields):
             ttk.Label(frame, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=3); widget.grid(row=row, column=1, sticky="ew", pady=3)
-        ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=4, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Selected by Default", variable=self.selected_var).grid(row=5, column=1, sticky="w")
-        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, foreground="#b00020", wraplength=420, style="Card.TLabel").grid(row=6, column=0, columnspan=2, sticky="w", pady=6)
-        buttons = ttk.Frame(frame); buttons.grid(row=7, column=0, columnspan=2, sticky="e")
+        ttk.Button(frame, text="Browse", command=self.choose_icon).grid(row=5, column=2, padx=4)
+        ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=6, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Selected by Default", variable=self.selected_var).grid(row=7, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Favorite", variable=self.favorite_var).grid(row=8, column=1, sticky="w")
+        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, foreground="#b00020", wraplength=420, style="Card.TLabel").grid(row=9, column=0, columnspan=2, sticky="w", pady=6)
+        buttons = ttk.Frame(frame); buttons.grid(row=10, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=3)
         ttk.Button(buttons, text="Save", command=self.accept, style="Primary.TButton").pack(side="right", padx=3)
         self.bind("<Escape>", lambda event: self.destroy()); self.bind("<Return>", lambda event: self.accept())
@@ -83,9 +95,17 @@ class WebsiteDialog(tk.Toplevel):
         if not profile: self.error_var.set("Select an existing Browser Profile."); return
         try: validate_profile_assignment(AppConfig(browser_profiles=self.profiles), profile)
         except Exception as exc: self.error_var.set(f"Selected browser profile is unavailable: {exc}"); return
-        self.result = WebsiteConfig(self.name_var.get().strip(), self.url_var.get().strip(), self.enabled_var.get(),
-                                    self.selected_var.get(), profile, self.group_var.get().strip())
+        tags = list(dict.fromkeys(value.strip() for value in self.tags_var.get().split(",") if value.strip()))
+        self.result = WebsiteConfig(name=self.name_var.get().strip(), url=self.url_var.get().strip(),
+                                    enabled=self.enabled_var.get(), selected=self.selected_var.get(),
+                                    browser_profile=profile, launch_group=self.group_var.get().strip(),
+                                    favorite=self.favorite_var.get(), tags=tags, icon_path=self.icon_var.get().strip())
         self.destroy()
+
+    def choose_icon(self):
+        value = filedialog.askopenfilename(parent=self, title="Choose Website Icon",
+                                           filetypes=[("Images", "*.png;*.gif;*.jpg;*.jpeg;*.ico")])
+        if value: self.icon_var.set(value)
 
 
 class SettingsWindow(tk.Toplevel):
@@ -172,9 +192,13 @@ class SettingsWindow(tk.Toplevel):
         self.remember_var = tk.BooleanVar(value=self.master_app.config.settings.remember_window_position)
         self.tray_var = tk.BooleanVar(value=self.master_app.config.settings.minimize_to_tray)
         self.startup_var = tk.BooleanVar(value=self.master_app.config.settings.launch_with_windows)
+        self.hotkey_var = tk.BooleanVar(value=self.master_app.config.settings.global_hotkey)
+        self.notifications_var = tk.BooleanVar(value=self.master_app.config.settings.notifications)
         ttk.Checkbutton(form, text="Remember window position", variable=self.remember_var).grid(row=3, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(form, text="Minimize to notification area when closed", variable=self.tray_var).grid(row=4, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(form, text="Launch Work Launcher when Windows starts", variable=self.startup_var).grid(row=5, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(form, text="Global shortcut: Ctrl+Alt+Space", variable=self.hotkey_var).grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(form, text="Enable launch notifications", variable=self.notifications_var).grid(row=7, column=0, columnspan=2, sticky="w")
         updates = ttk.LabelFrame(frame, text="Updates", padding=8); updates.pack(fill="x", pady=(8, 0))
         self.update_channel_var=tk.StringVar(value=self.master_app.config.updates.channel); self.update_policy_var=tk.StringVar(value=self.master_app.config.updates.policy)
         self.update_install_var=tk.StringVar(value=self.master_app.config.updates.installation_kind)
@@ -488,13 +512,20 @@ class SettingsWindow(tk.Toplevel):
         try:
             tray_var = getattr(self, "tray_var", None)
             tray_enabled = tray_var.get() if tray_var is not None else self.master_app.config.settings.minimize_to_tray
+            hotkey_var = getattr(self, "hotkey_var", None)
+            hotkey_enabled = hotkey_var.get() if hotkey_var is not None else self.master_app.config.settings.global_hotkey
+            notifications_var = getattr(self, "notifications_var", None)
+            notifications_enabled = (notifications_var.get() if notifications_var is not None
+                                     else self.master_app.config.settings.notifications)
             delay=float(self.delay_var.get()); cooldown=float(self.cooldown_var.get())
             if delay < 0 or cooldown < 0: raise ValueError("Launch delay and duplicate cooldown cannot be negative.")
             original=self.original_config; config=self.master_app.config
             general_dirty=(delay != original.settings.launch_delay_seconds or cooldown != original.settings.duplicate_launch_cooldown_seconds
                 or self.theme_var.get() != original.settings.theme or self.visual_style_var.get() != original.settings.visual_style
                 or self.remember_var.get() != original.settings.remember_window_position
-                or tray_enabled != original.settings.minimize_to_tray)
+                or tray_enabled != original.settings.minimize_to_tray
+                or hotkey_enabled != original.settings.global_hotkey
+                or notifications_enabled != original.settings.notifications)
             startup_dirty=self.startup_var.get() != original.settings.launch_with_windows
             update_values=(self.update_channel_var.get(),self.update_policy_var.get(),
                            self.update_check_var.get(),self.update_download_var.get())
@@ -513,6 +544,8 @@ class SettingsWindow(tk.Toplevel):
                 config.settings.theme=self.theme_var.get(); config.settings.visual_style=self.visual_style_var.get()
                 config.settings.remember_window_position=self.remember_var.get()
                 config.settings.minimize_to_tray=tray_enabled
+                config.settings.global_hotkey=hotkey_enabled
+                config.settings.notifications=notifications_enabled
             if updates_dirty:
                 (config.updates.channel,config.updates.policy,
                  config.updates.automatically_check,config.updates.automatically_download)=update_values
@@ -563,6 +596,7 @@ class WorkLauncherApp(tk.Tk):
         self.update_manager = UpdateManager(self.config, self.config_path); self.update_events = queue.Queue()
         self.schedule_state: dict[str, ScheduleState] = {}
         self.tray: TrayController | None = None
+        self.hotkey: GlobalHotkey | None = None
         self.is_launching = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build()
@@ -579,6 +613,10 @@ class WorkLauncherApp(tk.Tk):
         self.after(1000, self._schedule_tick)
         if self.config.settings.minimize_to_tray:
             self.after(0, self._ensure_tray)
+        automatic_backup(self.config_path, app_data_dir() / "Backups")
+        if self.config.settings.global_hotkey:
+            self.hotkey = GlobalHotkey(lambda: self.after(0, self._show_from_tray))
+            if not self.hotkey.start(): warnings.append("The Ctrl+Alt+Space global shortcut is already in use.")
 
     def _build(self) -> None:
         self.shell = ttk.Frame(self)
@@ -609,6 +647,10 @@ class WorkLauncherApp(tk.Tk):
         tools = ttk.Menubutton(header_actions, text="Tools ▾", style="Secondary.TButton")
         tools_menu = tk.Menu(tools, tearoff=False)
         tools_menu.add_command(label="Manage Workspaces", command=self.open_workspace_manager)
+        tools_menu.add_command(label="Launch History", command=self.open_session_history)
+        tools_menu.add_command(label="Import Browser Bookmarks", command=self.import_bookmarks)
+        tools_menu.add_command(label="Backup Configuration", command=self.backup_configuration)
+        tools_menu.add_command(label="Restore Configuration", command=self.restore_configuration)
         tools_menu.add_command(label="Check Website Health", command=self.check_website_health)
         tools_menu.add_command(label="Check for Updates", command=lambda: self.check_for_updates(force=True))
         tools_menu.add_command(label="Release Notes", command=self.open_release_notes)
@@ -651,6 +693,7 @@ class WorkLauncherApp(tk.Tk):
         self.launch_preset_button.pack(side="left", padx=(5, 0))
 
         self.website_vars: list[tk.BooleanVar] = []
+        self.site_icons = []
         list_card = ttk.Frame(self.dashboard, padding=14, style="Row.TFrame")
         list_card.pack(fill="both", expand=True)
         list_header = ttk.Frame(list_card, style="Card.TFrame")
@@ -713,6 +756,7 @@ class WorkLauncherApp(tk.Tk):
         for child in self.website_container.winfo_children():
             child.destroy()
         self.website_vars.clear()
+        self.site_icons.clear()
         if not self.config.websites:
             empty = ttk.Frame(self.website_container, padding=36, style="Card.TFrame")
             empty.pack(fill="both", expand=True)
@@ -737,13 +781,21 @@ class WorkLauncherApp(tk.Tk):
             ttk.Checkbutton(
                 row, variable=var, command=self._selection_changed, style="Card.TCheckbutton"
             ).pack(side="left", padx=(0, 8))
+            if site.icon_path and Path(site.icon_path).is_file():
+                try:
+                    from PIL import Image, ImageTk
+                    icon = ImageTk.PhotoImage(Image.open(site.icon_path).convert("RGBA").resize((24, 24)))
+                    self.site_icons.append(icon); ttk.Label(row, image=icon, style="Card.TLabel").pack(side="left", padx=(0, 8))
+                except Exception: pass
             details = ttk.Frame(row, style="Card.TFrame")
             details.pack(side="left", fill="x", expand=True)
-            ttk.Label(details, text=site.name, style="RowTitle.TLabel").pack(anchor="w")
+            ttk.Label(details, text=("★ " if site.favorite else "") + site.name, style="RowTitle.TLabel").pack(anchor="w")
             profile = self.config.browser_profiles.get(site.browser_profile)
             metadata = [profile.name if profile else site.browser_profile]
             if site.launch_group:
                 metadata.append(site.launch_group)
+            if site.tags:
+                metadata.append(", ".join(site.tags))
             if not site.enabled:
                 metadata.append("Disabled")
             ttk.Label(details, text="  ·  ".join(metadata), style="RowMeta.TLabel").pack(anchor="w", pady=(2, 0))
@@ -755,6 +807,8 @@ class WorkLauncherApp(tk.Tk):
                 command=lambda s=site: self.toggle_website(s),
             )
             item_menu.add_command(label="Edit in Settings", command=self.open_settings)
+            item_menu.add_command(label="Remove Favorite" if site.favorite else "Add to Favorites",
+                                  command=lambda s=site: self.toggle_favorite(s))
             item_menu.add_separator()
             item_menu.add_command(label="Delete", command=lambda s=site: self.delete_website(s))
             menu_button.configure(menu=item_menu)
@@ -782,6 +836,9 @@ class WorkLauncherApp(tk.Tk):
         website.enabled = not website.enabled
         save_config(self.config_path, self.config)
         self.refresh_ui()
+
+    def toggle_favorite(self, website: WebsiteConfig) -> None:
+        website.favorite = not website.favorite; save_config(self.config_path, self.config); self.refresh_ui()
 
     def delete_website(self, website: WebsiteConfig) -> None:
         if not messagebox.askyesno(APP_NAME, f'Delete "{website.name}"?', parent=self):
@@ -881,6 +938,52 @@ class WorkLauncherApp(tk.Tk):
         failed = [item.item for item in results if not item.success]
         self.set_status(f"Preset {preset.name} complete. Report: {report.name}" if not failed
                         else f"Preset {preset.name} complete. Failed: {', '.join(failed)}")
+        LaunchResultsDialog(self, preset, results, lambda names: self.retry_preset_items(preset, names))
+        if self.config.settings.notifications:
+            if not (self.tray and self.tray.notify(self.status.get())):
+                notify(APP_NAME, self.status.get())
+
+    def retry_preset_items(self, preset, names) -> None:
+        retry = copy.deepcopy(preset)
+        retry.items = [value for value in preset.items if value.split(":", 1)[1] in names]
+        if retry.items: self.launch_preset(retry)
+
+    def open_session_history(self) -> None:
+        SessionHistoryDialog(self)
+
+    def backup_configuration(self) -> None:
+        path = filedialog.asksaveasfilename(parent=self, title="Backup Configuration", defaultextension=".json",
+                                            filetypes=[("JSON configuration", "*.json")])
+        if path:
+            create_backup(self.config, Path(path)); messagebox.showinfo(APP_NAME, "Configuration backup created.", parent=self)
+
+    def restore_configuration(self) -> None:
+        path = filedialog.askopenfilename(parent=self, title="Restore Configuration",
+                                          filetypes=[("JSON configuration", "*.json")])
+        if not path: return
+        try:
+            restored, summary = inspect_backup(Path(path))
+            if not messagebox.askyesno(APP_NAME, f"Restore this backup?\n\n{summary}\n\nThe current configuration will be backed up first.", parent=self): return
+            automatic_backup(self.config_path, app_data_dir() / "Backups")
+            self.config = restored; save_config(self.config_path, self.config)
+            self.launcher.browser_profiles = self.config.browser_profiles
+            self.workspace_launcher.config = self.config; self.refresh_ui()
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Could not restore backup: {exc}", parent=self)
+
+    def import_bookmarks(self) -> None:
+        path = filedialog.askopenfilename(parent=self, title="Import Browser Bookmark Export",
+                                          filetypes=[("Bookmark HTML", "*.html;*.htm")])
+        if not path: return
+        try:
+            bookmarks = parse_bookmarks(Path(path)); existing = {item.url.casefold() for item in self.config.websites}
+            incoming = [item for item in bookmarks if item.url.casefold() not in existing]
+            if not incoming: messagebox.showinfo(APP_NAME, "No new HTTP/HTTPS bookmarks were found.", parent=self); return
+            if not messagebox.askyesno(APP_NAME, f"Import {len(incoming)} new bookmarks?", parent=self): return
+            profile = next(iter(self.config.browser_profiles))
+            self.config.websites.extend(WebsiteConfig(item.name, item.url, browser_profile=profile, tags=["Imported"])
+                                        for item in incoming)
+            save_config(self.config_path, self.config); self.refresh_ui()
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Could not import bookmarks: {exc}", parent=self)
 
     def open_command_palette(self) -> None:
         commands = {
@@ -983,6 +1086,7 @@ class WorkLauncherApp(tk.Tk):
         self.focus_force()
 
     def quit_application(self) -> None:
+        if self.hotkey: self.hotkey.stop(); self.hotkey = None
         if self.tray:
             self.tray.stop()
             self.tray = None

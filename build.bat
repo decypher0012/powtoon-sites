@@ -27,6 +27,17 @@ if not exist dist\Updater.exe (
   echo dist\Updater.exe was not created.
   exit /b 1
 )
+if defined WORKLAUNCHER_SIGNING_THUMBPRINT (
+  where signtool.exe >nul 2>nul
+  if errorlevel 1 (
+    echo WORKLAUNCHER_SIGNING_THUMBPRINT is set but signtool.exe was not found.
+    exit /b 1
+  )
+  signtool.exe sign /sha1 %WORKLAUNCHER_SIGNING_THUMBPRINT% /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\WorkLauncher.exe
+  if errorlevel 1 exit /b 1
+  signtool.exe sign /sha1 %WORKLAUNCHER_SIGNING_THUMBPRINT% /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\Updater.exe
+  if errorlevel 1 exit /b 1
+)
 set "ISCC_PATH="
 where ISCC.exe >nul 2>nul && set "ISCC_PATH=ISCC.exe"
 if not defined ISCC_PATH if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
@@ -51,6 +62,10 @@ if errorlevel 1 exit /b 1
 if not exist dist\WorkLauncher-Setup.exe (
   echo dist\WorkLauncher-Setup.exe was not created.
   exit /b 1
+)
+if defined WORKLAUNCHER_SIGNING_THUMBPRINT (
+  signtool.exe sign /sha1 %WORKLAUNCHER_SIGNING_THUMBPRINT% /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\WorkLauncher-Setup.exe
+  if errorlevel 1 exit /b 1
 )
 python tools\audit_installer.py
 if errorlevel 1 exit /b 1

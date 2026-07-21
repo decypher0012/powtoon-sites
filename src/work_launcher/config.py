@@ -31,6 +31,9 @@ class WebsiteConfig:
     selected: bool = True
     browser_profile: str = WORK_PROFILE_ID
     launch_group: str = ""
+    favorite: bool = False
+    tags: list[str] = field(default_factory=list)
+    icon_path: str = ""
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -81,6 +84,8 @@ class AppSettings:
     window_x: int | None = None
     window_y: int | None = None
     window_maximized: bool = False
+    global_hotkey: bool = False
+    notifications: bool = True
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -167,7 +172,8 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
         raise ConfigError("settings.launch_delay_seconds must be >= 0")
     if settings.duplicate_launch_cooldown_seconds < 0:
         raise ConfigError("settings.duplicate_launch_cooldown_seconds must be >= 0")
-    for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows", "window_maximized"):
+    for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows", "window_maximized",
+                 "global_hotkey", "notifications"):
         if type(getattr(settings, name)) is not bool:
             raise ConfigError(f"settings.{name} must be true or false")
     for name in ("window_width", "window_height"):
@@ -199,6 +205,13 @@ def _parse_websites(items: Any) -> list[WebsiteConfig]:
         selected = item.get("selected", False)
         if type(enabled) is not bool or type(selected) is not bool:
             raise ConfigError(f"website enabled/selected values must be true or false for {name}")
+        favorite, tags = item.get("favorite", False), item.get("tags", [])
+        if type(favorite) is not bool:
+            raise ConfigError(f"website.favorite must be true or false for {name}")
+        if not isinstance(tags, list) or not all(isinstance(value, str) for value in tags):
+            raise ConfigError(f"website.tags must be a list of strings for {name}")
+        if not isinstance(item.get("icon_path", ""), str):
+            raise ConfigError(f"website.icon_path must be text for {name}")
         websites.append(
             WebsiteConfig(
                 name=name.strip(),
@@ -207,6 +220,9 @@ def _parse_websites(items: Any) -> list[WebsiteConfig]:
                 selected=selected,
                 browser_profile=str(item.get("browser_profile", WORK_PROFILE_ID)),
                 launch_group=str(item.get("launch_group", "")).strip(),
+                favorite=favorite,
+                tags=[value.strip() for value in tags if value.strip()],
+                icon_path=item.get("icon_path", "").strip(),
                 extra={key:value for key,value in item.items() if key not in WebsiteConfig.__dataclass_fields__},
             )
         )

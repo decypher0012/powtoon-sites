@@ -99,7 +99,7 @@ def search_websites(config: AppConfig, query: str) -> list[int]:
     result = []
     for index, site in enumerate(config.websites):
         profile = config.browser_profiles.get(site.browser_profile)
-        haystack = " ".join((site.name, site.url, site.browser_profile, profile.name if profile else "")).casefold()
+        haystack = " ".join((site.name, site.url, site.browser_profile, profile.name if profile else "", *site.tags)).casefold()
         if needle in haystack: result.append(index)
     return result
 

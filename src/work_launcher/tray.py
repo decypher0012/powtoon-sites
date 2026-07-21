@@ -40,3 +40,12 @@ class TrayController:
         if self.icon is not None:
             self.icon.stop()
             self.icon = None
+
+    def notify(self, message: str, title: str = "Work Launcher") -> bool:
+        if self.icon is None:
+            return False
+        try:
+            self.icon.notify(message, title)
+            return True
+        except Exception:
+            return False

@@ -8,9 +8,15 @@ The main window uses a centered dashboard with compact launch controls, scrollab
 
 Use **Manage Workspaces** to add local applications or documents, combine them with websites into ordered presets, and schedule presets by weekday and time. Executables launch with an argument list and `shell=False`; documents use their registered Windows file association. The **Workspace Preset** control runs a preset immediately and writes a bounded session report under `%LOCALAPPDATA%\WorkLauncher\Reports\`.
 
+Workspace entries can be edited, duplicated, enabled or disabled, and reordered. **Launch History** displays the saved result of each preset and failed items can be retried. Website favorites and searchable tags help keep larger lists organized.
+
 Press **Ctrl+K** for the command palette. It can open websites, launch presets, manage workspaces, check website-origin health, or check for updates. Enable **Minimize to notification area when closed** in Settings for tray access to presets and update checks.
 
 Schedules run at most once per local calendar day and request confirmation before launching. A schedule can require basic network connectivity. Optional organization policy at `%PROGRAMDATA%\WorkLauncher\policy.json` can add required websites, restrict allowed domains, disable local application entries, and lock the update channel.
+
+Use **Sync Windows Tasks** to create per-user Windows tasks for enabled schedules. This wakes Work Launcher at the requested time; the app remains responsible for network checks, once-per-day tracking, and launch confirmation. A routine missed while the app was closed is offered when it next starts that day.
+
+The Tools menu can import a browser-generated Netscape bookmark HTML export, create or restore validated configuration backups, and open launch history. Settings can enable `Ctrl+Alt+Space` as a system-wide shortcut and enable best-effort launch notifications. Work Launcher does not read live browser bookmark databases.
 
 ## GitHub Releases and updates
 
@@ -170,6 +176,10 @@ Manual editing of `%APPDATA%\WorkLauncher\config.json` remains available for adv
 - Review logs in `%LOCALAPPDATA%\WorkLauncher\logs\` for sanitized discovery, validation, and launch results.
 
 ## Run, test, and build
+
+### Optional code signing
+
+Release builds can be Authenticode-signed when an organization-controlled certificate is installed in the Windows certificate store. Set `WORKLAUNCHER_SIGNING_THUMBPRINT` to its SHA-1 certificate thumbprint before running `build.bat`. The build signs both executables and the installer with SHA-256 and a trusted timestamp before generating release checksums. If the variable is set but `signtool.exe` or the certificate is unavailable, the build stops instead of publishing unsigned files accidentally. Leaving the variable unset preserves local unsigned development builds.
 
 Windows and Python 3 are required.
 

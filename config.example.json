@@ -1,5 +1,5 @@
 {
-  "config_version": 6,
+  "config_version": 7,
   "settings": {
     "launch_delay_seconds": 0.5,
     "duplicate_launch_cooldown_seconds": 5.0,
@@ -8,6 +8,8 @@
     "remember_window_position": true,
     "minimize_to_tray": false,
     "launch_with_windows": false,
+    "global_hotkey": false,
+    "notifications": true,
     "window_width": 1080,
     "window_height": 760,
     "window_x": null,

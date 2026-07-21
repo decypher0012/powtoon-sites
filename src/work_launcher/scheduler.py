@@ -21,7 +21,8 @@ def due_schedules(schedules: list[ScheduleConfig], state: dict[str, ScheduleStat
         schedule_state = state.setdefault(schedule.name, ScheduleState())
         if schedule.last_run_date and not schedule_state.last_run_key:
             schedule_state.last_run_key = schedule.last_run_date
-        if (schedule.enabled and now.weekday() in schedule.weekdays and schedule.time == clock
+        # A less-than comparison catches a routine missed while the app was closed.
+        if (schedule.enabled and now.weekday() in schedule.weekdays and schedule.time <= clock
                 and schedule_state.last_run_key != date_key and (network_ok or not schedule.require_network)):
             schedule_state.last_run_key = date_key
             schedule.last_run_date = date_key
