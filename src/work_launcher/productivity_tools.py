@@ -59,6 +59,13 @@ def verify_organization_package(path: Path, public_key_path: Path) -> dict:
     return data
 
 
+def public_key_fingerprint(public_key_path: Path) -> str:
+    from cryptography.hazmat.primitives import serialization
+    key = serialization.load_pem_public_key(public_key_path.read_bytes())
+    der = key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return hashlib.sha256(der).hexdigest()
+
+
 def merge_organization_package(config: AppConfig, package: dict) -> AppConfig:
     result = copy.deepcopy(config); incoming = validate_config_data(package["config"])
     existing_sites = {item.name.casefold() for item in result.websites}

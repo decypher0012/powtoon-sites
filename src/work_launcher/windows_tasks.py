@@ -7,6 +7,24 @@ from pathlib import Path
 from .config import ScheduleConfig
 
 
+def query_task_status(schedules: list[ScheduleConfig], runner=subprocess.run) -> list[dict[str, str]]:
+    results = []
+    for schedule in schedules:
+        query = runner(["schtasks", "/Query", "/TN", task_name(schedule), "/FO", "LIST", "/V"],
+                       capture_output=True, text=True, check=False,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        values = {}
+        if query.returncode == 0:
+            for line in query.stdout.splitlines():
+                if ":" in line:
+                    key, value = line.split(":", 1); values[key.strip().casefold()] = value.strip()
+        results.append({"name": schedule.name, "registered": "yes" if query.returncode == 0 else "no",
+                        "next_run": values.get("next run time", "Unavailable"),
+                        "last_run": values.get("last run time", "Never"),
+                        "status": values.get("status", "Not registered")})
+    return results
+
+
 def task_name(schedule: ScheduleConfig) -> str:
     digest = hashlib.sha256(schedule.name.encode("utf-8")).hexdigest()[:12]
     return f"WorkLauncher-{digest}"

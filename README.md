@@ -2,6 +2,12 @@
 
 Work Launcher is a Windows workspace launcher for websites, local applications, documents, presets, and scheduled routines. It stores configuration at `%APPDATA%\WorkLauncher\config.json`, rotating logs at `%LOCALAPPDATA%\WorkLauncher\logs\`, and never reads or modifies browser data or credentials.
 
+Version 1.5 adds responsive icon navigation, active navigation state, categorized Settings pages, dashboard website editing, drag reordering with keyboard alternatives, onboarding guidance, schedule diagnostics, trusted organization-key fingerprints, crash-save recovery, safe mode, sanitized diagnostic bundles, and paginated website rendering for large configurations.
+
+Start a packaged or source copy with `--safe-mode` when a damaged integration prevents normal startup. Safe mode skips enterprise policy, schedules, tray integration, update checks, global hotkeys, and custom website icons while keeping configuration repair and export available. A valid interrupted `config.json.tmp` save is recovered automatically; invalid temporary data is discarded.
+
+The dashboard renders websites in bounded pages of 50 by default. Settings is divided into Websites, Browser Profiles, General, and Updates. Dragging website rows in Settings reorders them, while Move Up and Move Down remain available for keyboard users. **Schedule Diagnostics** shows registration, status, last run, and next run for each Windows task and can repair the task set. **Export Diagnostics Bundle** creates a ZIP with sanitized version, counts, non-sensitive settings, browser profile names/types, and the bounded sanitized log tail—never website URLs or local application paths.
+
 The main window uses a centered dashboard with compact launch controls, scrollable website cards, per-site action menus, selection feedback, and a concise update indicator. It opens at a practical desktop size, remembers whether it was maximized, and keeps the dashboard centered on larger displays.
 
 ## Workspaces, applications, and automation

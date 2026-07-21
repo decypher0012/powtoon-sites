@@ -90,6 +90,9 @@ class AppSettings:
     window_maximized: bool = False
     global_hotkey: bool = False
     notifications: bool = True
+    sidebar_collapsed: bool = False
+    website_page_size: int = 50
+    trusted_organization_keys: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -177,9 +180,14 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
     if settings.duplicate_launch_cooldown_seconds < 0:
         raise ConfigError("settings.duplicate_launch_cooldown_seconds must be >= 0")
     for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows", "window_maximized",
-                 "global_hotkey", "notifications"):
+                 "global_hotkey", "notifications", "sidebar_collapsed"):
         if type(getattr(settings, name)) is not bool:
             raise ConfigError(f"settings.{name} must be true or false")
+    if type(settings.website_page_size) is not int or not 20 <= settings.website_page_size <= 200:
+        raise ConfigError("settings.website_page_size must be an integer between 20 and 200")
+    if (not isinstance(settings.trusted_organization_keys, list)
+            or not all(isinstance(value, str) and len(value) == 64 for value in settings.trusted_organization_keys)):
+        raise ConfigError("settings.trusted_organization_keys must contain SHA-256 fingerprints")
     for name in ("window_width", "window_height"):
         value = getattr(settings, name)
         if type(value) is not int or not 320 <= value <= 10000:
@@ -433,6 +441,18 @@ def backup_config(path: Path) -> Path | None:
 def load_config(path: Path | None = None) -> tuple[AppConfig, list[str]]:
     path = path or get_config_path()
     warnings: list[str] = []
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    if temporary.is_file():
+        try:
+            candidate = json.loads(temporary.read_text(encoding="utf-8"))
+            recovered = validate_config_data(candidate)
+            if not path.exists() or temporary.stat().st_mtime > path.stat().st_mtime:
+                os.replace(temporary, path)
+                warnings.append("Recovered an interrupted configuration save.")
+                return recovered, warnings
+            temporary.unlink(missing_ok=True)
+        except (OSError, json.JSONDecodeError, ConfigError):
+            temporary.unlink(missing_ok=True)
     if not path.exists():
         config = default_config()
         write_config(path, config)

@@ -1,5 +1,5 @@
 {
-  "config_version": 8,
+  "config_version": 9,
   "settings": {
     "launch_delay_seconds": 0.5,
     "duplicate_launch_cooldown_seconds": 5.0,
@@ -10,6 +10,9 @@
     "launch_with_windows": false,
     "global_hotkey": false,
     "notifications": true,
+    "sidebar_collapsed": false,
+    "website_page_size": 50,
+    "trusted_organization_keys": [],
     "window_width": 1080,
     "window_height": 760,
     "window_x": null,

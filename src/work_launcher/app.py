@@ -55,8 +55,11 @@ from .global_hotkey import GlobalHotkey
 from .notifications import notify
 from .utility_dialogs import LaunchResultsDialog, SelectionDialog, SessionHistoryDialog
 from .productivity_tools import (export_transfer, find_repair_issues, import_transfer,
-                                 merge_organization_package, stage_rollback, verify_organization_package)
+                                 merge_organization_package, public_key_fingerprint, stage_rollback, verify_organization_package)
 from .update_download import updates_dir
+from .diagnostics_bundle import create_diagnostics_bundle
+from .windows_tasks import query_task_status, sync_tasks
+from .dashboard_components import ScheduleDiagnosticsDialog, create_nav_icon
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -137,11 +140,13 @@ class SettingsWindow(tk.Toplevel):
         self._build()
 
     def _build(self) -> None:
-        canvas=tk.Canvas(self,highlightthickness=0); style_canvas(canvas, self._palette); scrollbar=ttk.Scrollbar(self,orient="vertical",command=canvas.yview); canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right",fill="y"); canvas.pack(side="left",fill="both",expand=True)
-        frame=ttk.Frame(canvas,padding=12); window=canvas.create_window((0,0),window=frame,anchor="nw")
-        frame.bind("<Configure>",lambda event:canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>",lambda event:canvas.itemconfigure(window,width=event.width))
+        ttk.Label(self, text="Settings", style="Header.TLabel", padding=(16, 14, 16, 4)).pack(anchor="w")
+        ttk.Label(self, text="Manage websites, browsers, preferences, and updates.", style="Muted.TLabel", padding=(16, 0, 16, 10)).pack(anchor="w")
+        notebook = ttk.Notebook(self); notebook.pack(fill="both", expand=True, padx=14)
+        frame = ttk.Frame(notebook, padding=12); profiles_page = ttk.Frame(notebook, padding=12)
+        preferences_page = ttk.Frame(notebook, padding=18); updates_page = ttk.Frame(notebook, padding=18)
+        notebook.add(frame, text="Websites"); notebook.add(profiles_page, text="Browser Profiles")
+        notebook.add(preferences_page, text="General"); notebook.add(updates_page, text="Updates")
         search = ttk.Frame(frame); search.pack(fill="x")
         ttk.Label(search, text="Search Websites").pack(side="left")
         self.search_var = tk.StringVar(); self.search_var.trace_add("write", lambda *_: self.refresh())
@@ -169,7 +174,10 @@ class SettingsWindow(tk.Toplevel):
         self.site_profile_combo.pack(fill="x")
         self.site_profile_combo.bind("<<ComboboxSelected>>", self.assign_site_profile)
         self.listbox.bind("<<ListboxSelect>>", self.on_site_selected)
-        profiles = ttk.LabelFrame(frame, text="Browser Profiles", padding=8)
+        self.listbox.bind("<ButtonPress-1>", self._drag_start)
+        self.listbox.bind("<ButtonRelease-1>", self._drag_finish)
+        self._drag_index = None
+        profiles = ttk.LabelFrame(profiles_page, text="Configured profiles", padding=8)
         profiles.pack(fill="x", pady=(0, 10))
         self.profile_list = tk.Listbox(profiles, height=4)
         style_listbox(self.profile_list, self._palette)
@@ -185,8 +193,8 @@ class SettingsWindow(tk.Toplevel):
                               ("Import Detected Profile", self.scan_profiles), ("Run Setup Wizard Again", self.run_setup_wizard)):
             ttk.Button(profile_buttons, text=text, command=command).pack(fill="x", pady=1)
         self.profile_status_var=tk.StringVar(value="Select a profile to view its availability and usage.")
-        ttk.Label(frame,textvariable=self.profile_status_var,wraplength=820).pack(fill="x",pady=(0,8))
-        form = ttk.Frame(frame)
+        ttk.Label(profiles_page,textvariable=self.profile_status_var,wraplength=820).pack(fill="x",pady=(0,8))
+        form = ttk.Frame(preferences_page)
         form.pack(fill="x")
         self.delay_var = tk.StringVar(value=str(self.master_app.config.settings.launch_delay_seconds))
         self.cooldown_var = tk.StringVar(value=str(self.master_app.config.settings.duplicate_launch_cooldown_seconds))
@@ -210,7 +218,7 @@ class SettingsWindow(tk.Toplevel):
         ttk.Checkbutton(form, text="Launch Work Launcher when Windows starts", variable=self.startup_var).grid(row=5, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(form, text="Global shortcut: Ctrl+Alt+Space", variable=self.hotkey_var).grid(row=6, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(form, text="Enable launch notifications", variable=self.notifications_var).grid(row=7, column=0, columnspan=2, sticky="w")
-        updates = ttk.LabelFrame(frame, text="Updates", padding=8); updates.pack(fill="x", pady=(8, 0))
+        updates = ttk.LabelFrame(updates_page, text="Release channel and automation", padding=12); updates.pack(fill="x", pady=(8, 0))
         self.update_channel_var=tk.StringVar(value=self.master_app.config.updates.channel); self.update_policy_var=tk.StringVar(value=self.master_app.config.updates.policy)
         self.update_install_var=tk.StringVar(value=self.master_app.config.updates.installation_kind)
         self.update_check_var=tk.BooleanVar(value=self.master_app.config.updates.automatically_check); self.update_download_var=tk.BooleanVar(value=self.master_app.config.updates.automatically_download)
@@ -229,8 +237,8 @@ class SettingsWindow(tk.Toplevel):
         ttk.Button(updates,text="Clear Skipped Version",command=self.clear_skipped_version).grid(row=7,column=0,sticky="w",pady=3)
         ttk.Button(updates,text="Repair Update Settings",command=self.repair_update_settings).grid(row=7,column=1,sticky="w",pady=3)
         ttk.Button(updates,text="Update Diagnostics",command=self.show_update_diagnostics).grid(row=7,column=2,columnspan=2,sticky="w",pady=3)
-        actions = ttk.Frame(frame)
-        actions.pack(fill="x", pady=(14, 0))
+        actions = ttk.Frame(self)
+        actions.pack(fill="x", padx=14, pady=12)
         ttk.Button(actions, text="Restore Defaults", command=self.restore_defaults).pack(side="left")
         ttk.Button(actions, text="Save", command=self.save).pack(side="right")
         self.refresh_profiles()
@@ -239,6 +247,17 @@ class SettingsWindow(tk.Toplevel):
     def _selected_index(self) -> int | None:
         sel = self.listbox.curselection()
         return self.visible_indices[sel[0]] if sel else None
+
+    def _drag_start(self, event):
+        self._drag_index = self.listbox.nearest(event.y)
+
+    def _drag_finish(self, event):
+        if self._drag_index is None or not self.visible_indices: return
+        target = self.listbox.nearest(event.y); source = self._drag_index; self._drag_index = None
+        if source == target or not (0 <= source < len(self.visible_indices) and 0 <= target < len(self.visible_indices)): return
+        source_index, target_index = self.visible_indices[source], self.visible_indices[target]
+        item = self.master_app.config.websites.pop(source_index); self.master_app.config.websites.insert(target_index, item)
+        self._persist_websites(); self.refresh(select_indices=[target_index])
 
     def _selected_indices(self) -> list[int]:
         return [self.visible_indices[index] for index in self.listbox.curselection()]
@@ -586,19 +605,23 @@ class SettingsWindow(tk.Toplevel):
 
 
 class WorkLauncherApp(tk.Tk):
-    def __init__(self, config_path: Path | None = None) -> None:
+    def __init__(self, config_path: Path | None = None, safe_mode: bool = False) -> None:
         super().__init__()
         self.title(APP_NAME)
         self.minsize(DEFAULT_MIN_WINDOW_WIDTH, DEFAULT_MIN_WINDOW_HEIGHT)
         self.config_path = config_path or get_config_path()
+        self.safe_mode = safe_mode
         config_existed = self.config_path.exists()
         self.executable_path = Path(sys.executable)
         self.log_path = configure_logging()
         self.config, warnings = load_config(self.config_path)
-        try:
-            apply_policy(self.config, load_policy())
-        except Exception as exc:
-            warnings.append(f"Enterprise policy could not be applied: {exc}")
+        if not safe_mode:
+            try:
+                apply_policy(self.config, load_policy())
+            except Exception as exc:
+                warnings.append(f"Enterprise policy could not be applied: {exc}")
+        else:
+            warnings.append("Safe mode is active: schedules, tray, policies, updates, and custom icons are disabled.")
         self.palette = apply_visual_style(self, self.config.settings.visual_style)
         cleanup_stale_updates()
         logging.info("Starting %s version %s", APP_NAME, __version__)
@@ -617,15 +640,15 @@ class WorkLauncherApp(tk.Tk):
             self.set_status(warning)
             logging.warning(warning)
         if should_run_setup(self.config, config_existed): self.after(150, self.open_setup_wizard)
-        elif self.update_manager.due(): self.after(500, self.check_for_updates)
+        elif not safe_mode and self.update_manager.due(): self.after(500, self.check_for_updates)
         update_status=consume_update_status()
         if update_status: self.after(300,lambda status=update_status:self.show_update_result(status))
         self.after(0, self.refresh_update_summary)
-        self.after(1000, self._schedule_tick)
-        if self.config.settings.minimize_to_tray:
+        if not safe_mode: self.after(1000, self._schedule_tick)
+        if not safe_mode and self.config.settings.minimize_to_tray:
             self.after(0, self._ensure_tray)
         automatic_backup(self.config_path, app_data_dir() / "Backups")
-        if self.config.settings.global_hotkey:
+        if not safe_mode and self.config.settings.global_hotkey:
             self.hotkey = GlobalHotkey(lambda: self.after(0, self._show_from_tray))
             if not self.hotkey.start(): warnings.append("The Ctrl+Alt+Space global shortcut is already in use.")
 
@@ -633,13 +656,18 @@ class WorkLauncherApp(tk.Tk):
         self.shell = ttk.Frame(self)
         self.shell.pack(fill="both", expand=True)
         self.sidebar = ttk.Frame(self.shell, padding=(14, 22), style="Sidebar.TFrame")
+        self.nav_buttons = {}
+        self.nav_icons = {}
         ttk.Label(self.sidebar, text="WORK", style="SidebarBrand.TLabel").pack(anchor="w", padx=8)
         ttk.Label(self.sidebar, text="LAUNCHER", style="Sidebar.TLabel").pack(anchor="w", padx=8, pady=(0, 28))
-        ttk.Button(self.sidebar, text="Dashboard", command=lambda: self.website_canvas.yview_moveto(0), style="NavPrimary.TButton").pack(fill="x", pady=2)
-        ttk.Button(self.sidebar, text="Workspaces", command=self.open_workspace_manager, style="Nav.TButton").pack(fill="x", pady=2)
-        ttk.Button(self.sidebar, text="Launch history", command=self.open_session_history, style="Nav.TButton").pack(fill="x", pady=2)
-        ttk.Button(self.sidebar, text="Repair center", command=self.open_repair_center, style="Nav.TButton").pack(fill="x", pady=2)
-        ttk.Button(self.sidebar, text="Settings", command=self.open_settings, style="Nav.TButton").pack(fill="x", pady=2)
+        for name, action in (("Dashboard", lambda: self.website_canvas.yview_moveto(0)),
+                             ("Workspaces", self.open_workspace_manager), ("Launch history", self.open_session_history),
+                             ("Repair center", self.open_repair_center), ("Settings", self.open_settings)):
+            icon = create_nav_icon(name); self.nav_icons[name] = icon
+            button = ttk.Button(self.sidebar, text=name, image=icon, compound="left", command=lambda n=name, a=action: self._run_nav_action(n, a),
+                                style="NavPrimary.TButton" if name == "Dashboard" else "Nav.TButton")
+            button.pack(fill="x", pady=2); self.nav_buttons[name] = button
+        ttk.Button(self.sidebar, text="Collapse navigation", command=self.toggle_sidebar, style="Nav.TButton").pack(side="bottom", fill="x", pady=(8, 2))
         ttk.Label(self.sidebar, text="Ctrl+K  Command palette", style="Sidebar.TLabel", wraplength=145).pack(side="bottom", anchor="w", padx=8, pady=8)
         self.dashboard = ttk.Frame(self.shell, padding=24, style="Card.TFrame")
         self.shell.bind("<Configure>", self._resize_dashboard)
@@ -674,6 +702,8 @@ class WorkLauncherApp(tk.Tk):
         tools_menu.add_command(label="Restore Configuration", command=self.restore_configuration)
         tools_menu.add_command(label="Configuration Transfer", command=self.configuration_transfer)
         tools_menu.add_command(label="Repair Center", command=self.open_repair_center)
+        tools_menu.add_command(label="Schedule Diagnostics", command=self.open_schedule_diagnostics)
+        tools_menu.add_command(label="Export Diagnostics Bundle", command=self.export_diagnostics_bundle)
         tools_menu.add_command(label="Import Signed Organization Package", command=self.import_organization_package)
         tools_menu.add_command(label="Restore Previous Portable Version", command=self.rollback_previous_version)
         tools_menu.add_command(label="Check Website Health", command=self.check_website_health)
@@ -712,7 +742,7 @@ class WorkLauncherApp(tk.Tk):
         ttk.Label(toolbar, text="Find", style="Card.TLabel").pack(side="left", padx=(0, 5))
         search = ttk.Entry(toolbar, textvariable=self.search_var, width=28)
         search.pack(side="left", fill="x", expand=True)
-        self.search_var.trace_add("write", lambda *_args: self.refresh_ui())
+        self.search_var.trace_add("write", lambda *_args: self._filters_changed())
 
         controls = ttk.Frame(self.dashboard, padding=(0, 0, 0, 12), style="Card.TFrame")
         controls.pack(fill="x")
@@ -741,10 +771,11 @@ class WorkLauncherApp(tk.Tk):
         ttk.Label(controls, text="View", style="Card.TLabel").pack(side="left", padx=(12, 5))
         self.filter_combo = ttk.Combobox(controls, textvariable=self.filter_var, state="readonly", width=10,
                                          values=["All", "Favorites", "Enabled", "Disabled"])
-        self.filter_combo.pack(side="left"); self.filter_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_ui())
+        self.filter_combo.pack(side="left"); self.filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._filters_changed())
 
         self.website_vars: list[tk.BooleanVar] = []
         self.displayed_websites: list[WebsiteConfig] = []
+        self.website_page = 0
         self.site_icons = []
         list_card = ttk.Frame(self.dashboard, padding=14, style="Row.TFrame")
         list_card.pack(fill="both", expand=True)
@@ -757,6 +788,10 @@ class WorkLauncherApp(tk.Tk):
         ttk.Button(list_header, text="Manage", command=self.open_settings, style="Compact.TButton").pack(side="right", padx=5)
         ttk.Button(list_header, text="Clear", command=self.clear_selection, style="Compact.TButton").pack(side="right")
         ttk.Button(list_header, text="Select all", command=self.select_all, style="Compact.TButton").pack(side="right", padx=5)
+        self.next_page_button = ttk.Button(list_header, text="Next", command=lambda: self.change_website_page(1), style="Compact.TButton")
+        self.next_page_button.pack(side="right", padx=(5, 0))
+        self.previous_page_button = ttk.Button(list_header, text="Previous", command=lambda: self.change_website_page(-1), style="Compact.TButton")
+        self.previous_page_button.pack(side="right")
 
         scroll_host = ttk.Frame(list_card, style="Card.TFrame")
         scroll_host.pack(fill="both", expand=True)
@@ -792,13 +827,25 @@ class WorkLauncherApp(tk.Tk):
         self.bind_all("<Control-k>", lambda event: self.open_command_palette())
 
     def _resize_dashboard(self, event) -> None:
-        sidebar_width = 184 if event.width >= 980 else 156
+        collapsed = self.config.settings.sidebar_collapsed or event.width < 980
+        sidebar_width = 64 if collapsed else (184 if event.width >= 980 else 156)
+        for name, button in self.nav_buttons.items(): button.configure(text="" if collapsed else name, compound="center" if collapsed else "left")
         margin = 16 if event.width >= 980 else 8
         self.sidebar.place(x=0, y=0, width=sidebar_width, height=event.height)
         available = max(event.width - sidebar_width - (margin * 2), 620)
         width = min(available, 1180)
         x = sidebar_width + margin + max((available - width) // 2, 0)
         self.dashboard.place(x=x, y=margin, width=width, height=max(event.height - margin * 2, 560))
+
+    def toggle_sidebar(self) -> None:
+        self.config.settings.sidebar_collapsed = not self.config.settings.sidebar_collapsed
+        save_config(self.config_path, self.config)
+        self._resize_dashboard(type("Resize", (), {"width": self.winfo_width(), "height": self.winfo_height()})())
+
+    def _run_nav_action(self, name, action) -> None:
+        for label, button in self.nav_buttons.items(): button.configure(style="NavPrimary.TButton" if label == name else "Nav.TButton")
+        action()
+
 
     def _scroll_websites(self, event) -> None:
         self.website_canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -822,6 +869,10 @@ class WorkLauncherApp(tk.Tk):
                 style="DashboardSubtitle.TLabel",
                 wraplength=460,
             ).pack(pady=(0, 16))
+            checklist = ttk.Frame(empty, padding=12, style="Surface.TFrame"); checklist.pack(fill="x", padx=60, pady=(0, 16))
+            ttk.Label(checklist, text="GET STARTED", style="StatLabel.TLabel").pack(anchor="w")
+            for step in ("1  Confirm a browser profile", "2  Add your first website", "3  Create a workspace preset", "4  Optionally schedule a routine"):
+                ttk.Label(checklist, text=step, style="StatLabel.TLabel").pack(anchor="w", pady=2)
             actions = ttk.Frame(empty, style="Card.TFrame")
             actions.pack()
             ttk.Button(actions, text="Add Website", command=self.add_first_website,
@@ -832,11 +883,17 @@ class WorkLauncherApp(tk.Tk):
         query = self.search_var.get().strip().casefold() if hasattr(self, "search_var") else ""
         tags = sorted({tag for site in self.config.websites for tag in site.tags}, key=str.casefold)
         if hasattr(self, "filter_combo"): self.filter_combo.configure(values=["All", "Favorites", "Enabled", "Disabled", *[f"Tag: {tag}" for tag in tags]])
-        self.displayed_websites = [site for site in self.config.websites if
+        matches = [site for site in self.config.websites if
             (filter_value == "All" or filter_value == "Favorites" and site.favorite or
              filter_value == "Enabled" and site.enabled or filter_value == "Disabled" and not site.enabled or
              filter_value.startswith("Tag: ") and filter_value[5:] in site.tags)
             and (not query or query in " ".join((site.name, site.url, site.launch_group, *site.tags)).casefold())]
+        page_size = self.config.settings.website_page_size; page_count = max(1, (len(matches) + page_size - 1) // page_size)
+        self.website_page = min(self.website_page, page_count - 1); start = self.website_page * page_size
+        self.displayed_websites = matches[start:start + page_size]
+        if hasattr(self, "previous_page_button"):
+            self.previous_page_button.configure(state="normal" if self.website_page else "disabled")
+            self.next_page_button.configure(state="normal" if self.website_page + 1 < page_count else "disabled")
         if self.config.websites and not self.displayed_websites:
             empty = ttk.Frame(self.website_container, padding=32, style="Card.TFrame"); empty.pack(fill="both", expand=True)
             ttk.Label(empty, text="No matching websites", style="CardSection.TLabel").pack(pady=(20, 6))
@@ -849,7 +906,7 @@ class WorkLauncherApp(tk.Tk):
             ttk.Checkbutton(
                 row, variable=var, command=self._selection_changed, style="Card.TCheckbutton"
             ).pack(side="left", padx=(0, 8))
-            if site.icon_path.startswith("builtin:"):
+            if not self.safe_mode and site.icon_path.startswith("builtin:"):
                 try:
                     from PIL import Image, ImageDraw, ImageTk
                     colors = {"work": "#246b9e", "web": "#16835d", "admin": "#a55b17", "meeting": "#7048a8", "document": "#596579"}
@@ -857,7 +914,7 @@ class WorkLauncherApp(tk.Tk):
                     draw.ellipse((7, 7, 17, 17), outline="white", width=2); icon = ImageTk.PhotoImage(image)
                     self.site_icons.append(icon); ttk.Label(row, image=icon, style="Card.TLabel").pack(side="left", padx=(0, 8))
                 except Exception: pass
-            elif site.icon_path and Path(site.icon_path).is_file():
+            elif not self.safe_mode and site.icon_path and Path(site.icon_path).is_file():
                 try:
                     from PIL import Image, ImageTk
                     icon = ImageTk.PhotoImage(Image.open(site.icon_path).convert("RGBA").resize((24, 24)))
@@ -882,7 +939,7 @@ class WorkLauncherApp(tk.Tk):
                 label="Disable" if site.enabled else "Enable",
                 command=lambda s=site: self.toggle_website(s),
             )
-            item_menu.add_command(label="Edit in Settings", command=self.open_settings)
+            item_menu.add_command(label="Edit website", command=lambda s=site: self.edit_inline_website(s))
             item_menu.add_command(label="Remove Favorite" if site.favorite else "Add to Favorites",
                                   command=lambda s=site: self.toggle_favorite(s))
             item_menu.add_separator()
@@ -907,6 +964,12 @@ class WorkLauncherApp(tk.Tk):
         self._selection_changed()
         self.set_status("Ready." if has_websites else "No websites configured. Add or import websites to begin.")
 
+    def change_website_page(self, direction: int) -> None:
+        self.website_page = max(0, self.website_page + direction); self.refresh_ui()
+
+    def _filters_changed(self) -> None:
+        self.website_page = 0; self.refresh_ui()
+
     def _selection_changed(self) -> None:
         selected = sum(var.get() for site, var in zip(self.displayed_websites, self.website_vars) if site.enabled)
         self.selection_summary_var.set(f"{selected} selected")
@@ -919,6 +982,15 @@ class WorkLauncherApp(tk.Tk):
 
     def toggle_favorite(self, website: WebsiteConfig) -> None:
         website.favorite = not website.favorite; save_config(self.config_path, self.config); self.refresh_ui()
+
+    def edit_inline_website(self, website: WebsiteConfig) -> None:
+        dialog = WebsiteDialog(self, "Edit Website", self.config.browser_profiles, copy.deepcopy(website)); self.wait_window(dialog)
+        if not dialog.result: return
+        try:
+            index = self.config.websites.index(website); warnings = edit_website(self.config, index, dialog.result)
+            save_config(self.config_path, self.config); self.refresh_ui()
+            if warnings: messagebox.showwarning(APP_NAME, "\n".join(warnings), parent=self)
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Could not edit website: {exc}", parent=self)
 
     def delete_website(self, website: WebsiteConfig) -> None:
         if not messagebox.askyesno(APP_NAME, f'Delete "{website.name}"?', parent=self):
@@ -1128,12 +1200,32 @@ class WorkLauncherApp(tk.Tk):
             self.open_settings()
         elif remaining: messagebox.showwarning("Repair Center", "Some items still need attention.\n\n" + "\n".join(f"• {i.kind}: {i.name}" for i in remaining), parent=self)
 
+    def open_schedule_diagnostics(self) -> None:
+        rows = query_task_status(self.config.schedules)
+        ScheduleDiagnosticsDialog(self, rows, lambda: sync_tasks(self.config.schedules, self.executable_path))
+
+    def export_diagnostics_bundle(self) -> None:
+        path = filedialog.asksaveasfilename(parent=self, title="Export Sanitized Diagnostics", defaultextension=".zip",
+                                            filetypes=[("ZIP archive", "*.zip")])
+        if not path: return
+        try: create_diagnostics_bundle(self.config, Path(path), self.log_path); messagebox.showinfo(APP_NAME, "Sanitized diagnostics exported.", parent=self)
+        except Exception as exc: messagebox.showerror(APP_NAME, f"Could not export diagnostics: {exc}", parent=self)
+
     def import_organization_package(self) -> None:
         package = filedialog.askopenfilename(parent=self, title="Signed Organization Package", filetypes=[("JSON package", "*.json")])
         if not package: return
         public_key = filedialog.askopenfilename(parent=self, title="Organization Public Key", filetypes=[("PEM public key", "*.pem")])
         if not public_key: return
         try:
+            fingerprint = public_key_fingerprint(Path(public_key))
+            trusted = self.config.settings.trusted_organization_keys
+            if fingerprint not in trusted:
+                formatted = ":".join(fingerprint[index:index + 4] for index in range(0, len(fingerprint), 4))
+                if trusted:
+                    warning = "This package uses a new or changed organization signing key."
+                else:
+                    warning = "This organization signing key has not been trusted before."
+                if not messagebox.askyesno(APP_NAME, f"{warning}\n\nSHA-256 fingerprint:\n{formatted}\n\nTrust this key?", parent=self): return
             verified = verify_organization_package(Path(package), Path(public_key))
             if not messagebox.askyesno(APP_NAME, "The package signature is valid. Import its approved configuration?", parent=self): return
             automatic_backup(self.config_path, app_data_dir() / "Backups"); self.config = merge_organization_package(self.config, verified)
@@ -1144,6 +1236,8 @@ class WorkLauncherApp(tk.Tk):
                 os.replace(policy_temp, policy_path)
                 apply_policy(self.config, load_policy(policy_path))
             save_config(self.config_path, self.config); self.workspace_launcher.config = self.config; self.refresh_ui()
+            if fingerprint not in self.config.settings.trusted_organization_keys:
+                self.config.settings.trusted_organization_keys.append(fingerprint); save_config(self.config_path, self.config)
         except Exception as exc: messagebox.showerror(APP_NAME, f"Package signature or contents are invalid: {exc}", parent=self)
 
     def rollback_previous_version(self) -> None:
@@ -1488,7 +1582,7 @@ def main() -> int:
             pass
         return 1
     try:
-        app = WorkLauncherApp()
+        app = WorkLauncherApp(safe_mode="--safe-mode" in sys.argv[1:])
         app.mainloop()
     finally:
         lock.release()
