@@ -1,4 +1,6 @@
 import json
+import os
+import time
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
@@ -22,7 +24,8 @@ def test_interrupted_valid_configuration_write_is_recovered(tmp_path):
     config.settings.theme = "dark"
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(config_to_dict(config)), encoding="utf-8")
-    temporary.touch()
+    future = time.time() + 2
+    os.utime(temporary, (future, future))
     loaded, warnings = load_config(path)
     assert loaded.settings.theme == "dark"
     assert any("interrupted" in value for value in warnings)
