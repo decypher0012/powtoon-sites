@@ -51,7 +51,7 @@ from .single_instance import AlreadyRunningError, SingleInstance
 from .constants import app_data_dir
 from .bookmark_import import parse_bookmarks
 from .backup_center import create_backup, automatic_backup, inspect_backup
-from .global_hotkey import GlobalHotkey
+from .global_hotkey import GlobalHotkey, PresetHotkeys
 from .notifications import notify
 from .utility_dialogs import LaunchResultsDialog, SelectionDialog, SessionHistoryDialog
 from .productivity_tools import (export_transfer, find_repair_issues, import_transfer,
@@ -60,6 +60,7 @@ from .update_download import updates_dir
 from .diagnostics_bundle import create_diagnostics_bundle
 from .windows_tasks import query_task_status, sync_tasks
 from .dashboard_components import ScheduleDiagnosticsDialog, create_nav_icon
+from .workflow_features import preset_readiness, recent_and_frequent, record_launch, resolve_chain
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -631,6 +632,7 @@ class WorkLauncherApp(tk.Tk):
         self.schedule_state: dict[str, ScheduleState] = {}
         self.tray: TrayController | None = None
         self.hotkey: GlobalHotkey | None = None
+        self.preset_hotkeys: PresetHotkeys | None = None
         self.is_launching = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build()
@@ -651,6 +653,8 @@ class WorkLauncherApp(tk.Tk):
         if not safe_mode and self.config.settings.global_hotkey:
             self.hotkey = GlobalHotkey(lambda: self.after(0, self._show_from_tray))
             if not self.hotkey.start(): warnings.append("The Ctrl+Alt+Space global shortcut is already in use.")
+        if not safe_mode:
+            self._refresh_preset_hotkeys()
 
     def _build(self) -> None:
         self.shell = ttk.Frame(self)
@@ -766,12 +770,17 @@ class WorkLauncherApp(tk.Tk):
             controls, text="Launch", command=self.launch_selected_preset, style="Compact.TButton"
         )
         self.launch_preset_button.pack(side="left", padx=(5, 0))
+        ttk.Button(controls, text="Check readiness", command=self.check_selected_preset_readiness,
+                   style="Compact.TButton").pack(side="left", padx=(5, 0))
 
         self.filter_var = tk.StringVar(value="All")
         ttk.Label(controls, text="View", style="Card.TLabel").pack(side="left", padx=(12, 5))
         self.filter_combo = ttk.Combobox(controls, textvariable=self.filter_var, state="readonly", width=10,
                                          values=["All", "Favorites", "Enabled", "Disabled"])
         self.filter_combo.pack(side="left"); self.filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._filters_changed())
+
+        self.quick_frame = ttk.LabelFrame(self.dashboard, text="Quick access", padding=(10, 7))
+        self.quick_frame.pack(fill="x", pady=(0, 8))
 
         self.website_vars: list[tk.BooleanVar] = []
         self.displayed_websites: list[WebsiteConfig] = []
@@ -942,6 +951,9 @@ class WorkLauncherApp(tk.Tk):
             item_menu.add_command(label="Edit website", command=lambda s=site: self.edit_inline_website(s))
             item_menu.add_command(label="Remove Favorite" if site.favorite else "Add to Favorites",
                                   command=lambda s=site: self.toggle_favorite(s))
+            pin_key = f"website:{site.name}"
+            item_menu.add_command(label="Unpin from Dashboard" if pin_key in self.config.settings.pinned_items else "Pin to Dashboard",
+                                  command=lambda key=pin_key: self.toggle_pin(key))
             item_menu.add_separator()
             item_menu.add_command(label="Delete", command=lambda s=site: self.delete_website(s))
             menu_button.configure(menu=item_menu)
@@ -961,6 +973,7 @@ class WorkLauncherApp(tk.Tk):
         self.open_selected_button.configure(state="normal" if has_websites else "disabled")
         self.launch_group_button.configure(state="normal" if has_websites else "disabled")
         self.refresh_preset_controls()
+        self._refresh_quick_access()
         self._selection_changed()
         self.set_status("Ready." if has_websites else "No websites configured. Add or import websites to begin.")
 
@@ -982,6 +995,34 @@ class WorkLauncherApp(tk.Tk):
 
     def toggle_favorite(self, website: WebsiteConfig) -> None:
         website.favorite = not website.favorite; save_config(self.config_path, self.config); self.refresh_ui()
+
+    def toggle_pin(self, key: str) -> None:
+        pins = self.config.settings.pinned_items
+        if key in pins: pins.remove(key)
+        else: pins.append(key)
+        save_config(self.config_path, self.config); self.refresh_ui()
+
+    def _refresh_quick_access(self) -> None:
+        if not hasattr(self, "quick_frame"): return
+        for child in self.quick_frame.winfo_children(): child.destroy()
+        recent, frequent = recent_and_frequent(self.config, 3)
+        pinned = list(self.config.settings.pinned_items)
+        pinned.extend(f"preset:{preset.name}" for preset in self.config.presets if preset.pinned)
+        keys = list(dict.fromkeys([*pinned, *recent, *frequent]))[:8]
+        if not keys:
+            ttk.Label(self.quick_frame, text="Pin a website or preset to keep it here.",
+                      style="Muted.TLabel").pack(side="left")
+            return
+        for key in keys:
+            kind, name = key.split(":", 1)
+            if kind == "preset":
+                preset = next((value for value in self.config.presets if value.name == name), None)
+                command = (lambda value=preset: self.launch_preset(value)) if preset else None
+            else:
+                site = next((value for value in self.config.websites if value.name == name), None)
+                command = (lambda value=site: self.open_single(value)) if site else None
+            if command:
+                ttk.Button(self.quick_frame, text=name, command=command, style="Compact.TButton").pack(side="left", padx=(0, 5))
 
     def edit_inline_website(self, website: WebsiteConfig) -> None:
         dialog = WebsiteDialog(self, "Edit Website", self.config.browser_profiles, copy.deepcopy(website)); self.wait_window(dialog)
@@ -1070,6 +1111,30 @@ class WorkLauncherApp(tk.Tk):
             self.tray.stop()
             self.tray = None
             self._ensure_tray()
+        self._refresh_preset_hotkeys()
+
+    def _refresh_preset_hotkeys(self) -> None:
+        if self.safe_mode: return
+        if self.preset_hotkeys:
+            self.preset_hotkeys.stop(); self.preset_hotkeys = None
+        callbacks = {
+            preset.hotkey: (lambda value=preset: self.after(0, lambda: self.launch_preset(value)))
+            for preset in self.config.presets if preset.hotkey
+        }
+        if callbacks:
+            self.preset_hotkeys = PresetHotkeys(callbacks)
+            if not self.preset_hotkeys.start():
+                logging.warning("One or more preset hotkeys could not be registered: %s", self.preset_hotkeys.failures)
+
+    def check_selected_preset_readiness(self) -> None:
+        preset = next((item for item in self.config.presets if item.name == self.preset_var.get()), None)
+        if not preset:
+            self.set_status("Select a workspace preset."); return
+        rows = preset_readiness(self.config, preset)
+        details = "\n".join(f"{'READY' if row.ready else 'NEEDS ATTENTION'} — {row.name}: {row.detail}" for row in rows)
+        ready = all(row.ready for row in rows)
+        (messagebox.showinfo if ready else messagebox.showwarning)(
+            "Startup Readiness", details or "No checks were needed.", parent=self)
 
     def open_workspace_manager(self) -> None:
         WorkspaceManager(self)
@@ -1083,6 +1148,7 @@ class WorkLauncherApp(tk.Tk):
         self.launch_preset(preset)
 
     def launch_preset(self, preset) -> None:
+        if preset is None: return
         started = datetime.now().astimezone()
         cancel_event = threading.Event()
         progress = tk.Toplevel(self); progress.title(f"Launching — {preset.name}"); progress.transient(self)
@@ -1114,6 +1180,15 @@ class WorkLauncherApp(tk.Tk):
         self.set_status(f"Preset {preset.name} complete. Report: {report.name}" if not failed
                         else f"Preset {preset.name} complete. Failed: {', '.join(failed)}")
         LaunchResultsDialog(self, preset, results, lambda names: self.retry_preset_items(preset, names))
+        record_launch(self.config, f"preset:{preset.name}")
+        save_config(self.config_path, self.config)
+        self._refresh_quick_access()
+        if preset.focus_minutes > 0 and not failed:
+            self.start_focus_session(preset.name, preset.focus_minutes)
+        if preset.chain_next and not failed:
+            next_preset = next((item for item in self.config.presets if item.name == preset.chain_next), None)
+            if next_preset:
+                self.after(250, lambda value=next_preset: self.launch_preset(value))
         if self.config.settings.notifications:
             if not (self.tray and self.tray.notify(self.status.get())):
                 notify(APP_NAME, self.status.get())
@@ -1122,6 +1197,29 @@ class WorkLauncherApp(tk.Tk):
         retry = copy.deepcopy(preset)
         retry.items = [value for value in preset.items if value.split(":", 1)[1] in names]
         if retry.items: self.launch_preset(retry)
+
+    def start_focus_session(self, name: str, minutes: int) -> None:
+        dialog = tk.Toplevel(self); dialog.title(f"Focus Session — {name}"); dialog.transient(self)
+        dialog.geometry("390x180")
+        remaining = {"seconds": minutes * 60, "paused": False}
+        clock = tk.StringVar()
+        ttk.Label(dialog, text=f"Focus session: {name}", style="Header.TLabel", padding=(18, 16, 18, 4)).pack()
+        ttk.Label(dialog, textvariable=clock, style="DashboardHeader.TLabel").pack(pady=8)
+        controls = ttk.Frame(dialog); controls.pack()
+        def toggle():
+            remaining["paused"] = not remaining["paused"]
+            pause.configure(text="Resume" if remaining["paused"] else "Pause")
+        pause = ttk.Button(controls, text="Pause", command=toggle); pause.pack(side="left", padx=4)
+        ttk.Button(controls, text="End Session", command=dialog.destroy).pack(side="left", padx=4)
+        def tick():
+            if not dialog.winfo_exists(): return
+            seconds = remaining["seconds"]; clock.set(f"{seconds // 60:02d}:{seconds % 60:02d}")
+            if seconds <= 0:
+                notify(APP_NAME, f"Focus session {name} is complete.")
+                dialog.destroy(); return
+            if not remaining["paused"]: remaining["seconds"] -= 1
+            dialog.after(1000, tick)
+        tick()
 
     def open_session_history(self) -> None:
         SessionHistoryDialog(self)
@@ -1364,6 +1462,7 @@ class WorkLauncherApp(tk.Tk):
 
     def quit_application(self) -> None:
         if self.hotkey: self.hotkey.stop(); self.hotkey = None
+        if self.preset_hotkeys: self.preset_hotkeys.stop(); self.preset_hotkeys = None
         if self.tray:
             self.tray.stop()
             self.tray = None
@@ -1493,6 +1592,9 @@ class WorkLauncherApp(tk.Tk):
 
     def open_single(self, website: WebsiteConfig) -> None:
         result = self.launcher.open_website(website)
+        if result.success:
+            record_launch(self.config, f"website:{website.name}"); save_config(self.config_path, self.config)
+            self._refresh_quick_access()
         self.set_status(result.message)
 
     def _set_launch_controls(self, enabled: bool) -> None:
@@ -1546,7 +1648,9 @@ class WorkLauncherApp(tk.Tk):
                 result = self.launcher.open_website(website)
                 self.set_status(result.message)
                 if not result.success: failures.append(website.name)
+                else: record_launch(self.config, f"website:{website.name}")
             self.set_status("Launch complete." if not failures else "Launch complete. Skipped: " + ", ".join(failures))
+            save_config(self.config_path, self.config); self._refresh_quick_access()
         finally:
             self.is_launching = False
             self._set_launch_controls(True)

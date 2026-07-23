@@ -9,20 +9,36 @@ from .config import (ApplicationConfig, PresetConfig, ScheduleConfig, config_to_
                      save_config, validate_config_data)
 from .windows_tasks import sync_tasks
 from .ui_style import style_listbox
+from .global_hotkey import parse_hotkey
+from .workflow_features import preset_templates
 
 
 class PresetEditor(tk.Toplevel):
     def __init__(self, master, choices, preset=None):
-        super().__init__(master); self.title("Visual Workspace Builder"); self.geometry("820x520")
+        super().__init__(master); self.title("Visual Workspace Builder"); self.geometry("900x620")
         self.transient(master); self.grab_set(); self.result = None; self.choices = choices
         self.name_var = tk.StringVar(value=preset.name if preset else "")
         self.mode_var = tk.StringVar(value=preset.run_mode if preset else "normal")
         self.stop_var = tk.BooleanVar(value=preset.stop_on_failure if preset else False)
+        self.pinned_var = tk.BooleanVar(value=preset.pinned if preset else False)
+        self.hotkey_var = tk.StringVar(value=preset.hotkey if preset else "")
+        self.chain_var = tk.StringVar(value=preset.chain_next if preset else "")
+        self.focus_var = tk.IntVar(value=preset.focus_minutes if preset else 0)
         top = ttk.Frame(self, padding=12); top.pack(fill="x")
         ttk.Label(top, text="Preset name").pack(side="left"); ttk.Entry(top, textvariable=self.name_var, width=28).pack(side="left", padx=6)
         ttk.Label(top, text="Run mode").pack(side="left", padx=(14, 4))
         ttk.Combobox(top, textvariable=self.mode_var, values=["normal", "dry-run", "step"], state="readonly", width=10).pack(side="left")
         ttk.Checkbutton(top, text="Stop after a failure", variable=self.stop_var).pack(side="left", padx=14)
+        advanced = ttk.LabelFrame(self, text="Optional workflow controls", padding=8); advanced.pack(fill="x", padx=12)
+        ttk.Checkbutton(advanced, text="Pin to dashboard", variable=self.pinned_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(advanced, text="Hotkey").grid(row=0, column=1, padx=(14, 4))
+        ttk.Entry(advanced, textvariable=self.hotkey_var, width=16).grid(row=0, column=2)
+        ttk.Label(advanced, text="Chain next").grid(row=0, column=3, padx=(14, 4))
+        ttk.Entry(advanced, textvariable=self.chain_var, width=16).grid(row=0, column=4)
+        ttk.Label(advanced, text="Focus minutes").grid(row=0, column=5, padx=(14, 4))
+        ttk.Spinbox(advanced, from_=0, to=480, textvariable=self.focus_var, width=6).grid(row=0, column=6)
+        ttk.Label(advanced, text="Example: Ctrl+Alt+M. A blank chain ends the sequence.",
+                  style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(5, 0))
         body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
         self.available = tk.Listbox(body); self.available.pack(side="left", fill="both", expand=True)
         controls = ttk.Frame(body); controls.pack(side="left", padx=8)
@@ -68,13 +84,33 @@ class PresetEditor(tk.Toplevel):
         try: parsed = list(dict.fromkeys(int(day.strip()) for day in (weekdays or "").split(",") if day.strip()))
         except ValueError: messagebox.showerror(self.title(), "Weekdays must be numbers from 0 through 6.", parent=self); return
         if not parsed or any(day not in range(7) for day in parsed): messagebox.showerror(self.title(), "Select at least one valid weekday.", parent=self); return
-        self.item_rules[value] = {"require_network": require_network, "weekdays": parsed}
+        start_time = simpledialog.askstring("Item Rules", "Optional earliest time (HH:MM):",
+                                            initialvalue=current.get("start_time", ""), parent=self)
+        end_time = simpledialog.askstring("Item Rules", "Optional latest time (HH:MM):",
+                                          initialvalue=current.get("end_time", ""), parent=self)
+        for clock in (start_time, end_time):
+            if clock:
+                try:
+                    hour, minute = (int(part) for part in clock.split(":"))
+                    if not (0 <= hour <= 23 and 0 <= minute <= 59): raise ValueError
+                except ValueError:
+                    messagebox.showerror(self.title(), "Times must use HH:MM.", parent=self); return
+        self.item_rules[value] = {"require_network": require_network, "weekdays": parsed,
+                                  "start_time": start_time or "", "end_time": end_time or ""}
     def accept(self):
         name, items = self.name_var.get().strip(), list(self.selected.get(0, "end"))
         if not name or not items: messagebox.showerror(self.title(), "Enter a name and add at least one item.", parent=self); return
+        try:
+            focus_minutes = self.focus_var.get()
+            if self.hotkey_var.get().strip(): parse_hotkey(self.hotkey_var.get().strip())
+            if not 0 <= focus_minutes <= 480: raise ValueError("Focus minutes must be between 0 and 480.")
+        except (ValueError, tk.TclError) as exc:
+            messagebox.showerror(self.title(), str(exc), parent=self); return
         self.result = PresetConfig(name, items, run_mode=self.mode_var.get(), stop_on_failure=self.stop_var.get(),
                                    item_delays={key: value for key, value in self.delays.items() if key in items},
-                                   item_rules={key: value for key, value in self.item_rules.items() if key in items})
+                                   item_rules={key: value for key, value in self.item_rules.items() if key in items},
+                                   pinned=self.pinned_var.get(), hotkey=self.hotkey_var.get().strip(),
+                                   chain_next=self.chain_var.get().strip(), focus_minutes=focus_minutes)
         self.destroy()
 
 
@@ -125,6 +161,7 @@ class WorkspaceManager(tk.Toplevel):
         footer = ttk.Frame(self)
         footer.pack(fill="x", padx=12, pady=(0, 12))
         ttk.Button(footer, text="Add Preset", command=self.add_preset).pack(side="left")
+        ttk.Button(footer, text="Add Templates", command=self.add_templates).pack(side="left", padx=5)
         ttk.Button(footer, text="Add Application", command=self.add_application).pack(side="left", padx=5)
         ttk.Button(footer, text="Add Schedule", command=self.add_schedule).pack(side="left")
         ttk.Button(footer, text="Edit", command=self.edit_selected).pack(side="left", padx=(12, 5))
@@ -197,6 +234,17 @@ class WorkspaceManager(tk.Toplevel):
                 messagebox.showerror(self.title(), "A preset with that name already exists.", parent=self); return
             self.master_app.config.presets.append(dialog.result); self._save()
 
+    def add_templates(self):
+        existing = {item.name.casefold() for item in self.master_app.config.presets}
+        additions = [item for item in preset_templates(self.master_app.config)
+                     if item.items and item.name.casefold() not in existing]
+        if not additions:
+            messagebox.showinfo(self.title(), "No applicable new templates are available.", parent=self)
+            return
+        self.master_app.config.presets.extend(additions)
+        self._save()
+        messagebox.showinfo(self.title(), f"Added {len(additions)} starter presets.", parent=self)
+
     def add_schedule(self):
         if not self.master_app.config.presets:
             messagebox.showwarning(self.title(), "Create a preset first.", parent=self)
@@ -226,6 +274,9 @@ class WorkspaceManager(tk.Toplevel):
                     self.master_app.config.schedules = [
                         schedule for schedule in self.master_app.config.schedules if schedule.preset != item.name
                     ]
+                    for preset in self.master_app.config.presets:
+                        if preset.chain_next == item.name:
+                            preset.chain_next = ""
                 del collection[selected[0]]
                 self._save()
                 return
@@ -270,8 +321,12 @@ class WorkspaceManager(tk.Toplevel):
             item.name, item.items, item.run_mode = dialog.result.name, dialog.result.items, dialog.result.run_mode
             item.stop_on_failure, item.item_delays = dialog.result.stop_on_failure, dialog.result.item_delays
             item.item_rules = dialog.result.item_rules
+            item.pinned, item.hotkey = dialog.result.pinned, dialog.result.hotkey
+            item.chain_next, item.focus_minutes = dialog.result.chain_next, dialog.result.focus_minutes
             for schedule in self.master_app.config.schedules:
                 if schedule.preset == old_name: schedule.preset = item.name
+            for other in self.master_app.config.presets:
+                if other.chain_next == old_name: other.chain_next = item.name
         else:
             dialog = ScheduleEditor(self, [value.name for value in self.master_app.config.presets], item); self.wait_window(dialog)
             if not dialog.result: return

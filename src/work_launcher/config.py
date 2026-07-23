@@ -58,6 +58,10 @@ class PresetConfig:
     stop_on_failure: bool = False
     item_delays: dict[str, float] = field(default_factory=dict)
     item_rules: dict[str, dict[str, Any]] = field(default_factory=dict)
+    pinned: bool = False
+    hotkey: str = ""
+    chain_next: str = ""
+    focus_minutes: int = 0
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -93,6 +97,8 @@ class AppSettings:
     sidebar_collapsed: bool = False
     website_page_size: int = 50
     trusted_organization_keys: list[str] = field(default_factory=list)
+    pinned_items: list[str] = field(default_factory=list)
+    launch_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -188,6 +194,15 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
     if (not isinstance(settings.trusted_organization_keys, list)
             or not all(isinstance(value, str) and len(value) == 64 for value in settings.trusted_organization_keys)):
         raise ConfigError("settings.trusted_organization_keys must contain SHA-256 fingerprints")
+    if not isinstance(settings.pinned_items, list) or not all(isinstance(value, str) for value in settings.pinned_items):
+        raise ConfigError("settings.pinned_items must be a list of strings")
+    if not isinstance(settings.launch_usage, dict):
+        raise ConfigError("settings.launch_usage must be an object")
+    for key, value in settings.launch_usage.items():
+        if (not isinstance(key, str) or not isinstance(value, dict)
+                or type(value.get("count", 0)) is not int or value.get("count", 0) < 0
+                or not isinstance(value.get("last", ""), str)):
+            raise ConfigError("settings.launch_usage entries must contain a non-negative count and text timestamp")
     for name in ("window_width", "window_height"):
         value = getattr(settings, name)
         if type(value) is not int or not 320 <= value <= 10000:
@@ -309,8 +324,52 @@ def _parse_presets(items: Any, websites: list[WebsiteConfig], applications: list
             weekdays = rule.get("weekdays", list(range(7)))
             if not isinstance(weekdays, list) or any(type(day) is not int or day not in range(7) for day in weekdays):
                 raise ConfigError(f"preset item rule weekdays must contain 0-6 for {name}")
-        result.append(PresetConfig(name, references, delay, run_mode, stop_on_failure, item_delays, item_rules,
-            {key: value for key, value in item.items() if key not in PresetConfig.__dataclass_fields__}))
+            for clock_name in ("start_time", "end_time"):
+                clock = rule.get(clock_name, "")
+                if not isinstance(clock, str):
+                    raise ConfigError(f"preset item rule {clock_name} must be text for {name}")
+                if clock:
+                    try:
+                        hour, minute = (int(value) for value in clock.split(":"))
+                        if not (0 <= hour <= 23 and 0 <= minute <= 59): raise ValueError
+                    except (ValueError, AttributeError):
+                        raise ConfigError(f"preset item rule {clock_name} must be HH:MM for {name}") from None
+        pinned, hotkey, chain_next = item.get("pinned", False), item.get("hotkey", ""), item.get("chain_next", "")
+        focus_minutes = item.get("focus_minutes", 0)
+        if type(pinned) is not bool:
+            raise ConfigError(f"preset.pinned must be true or false for {name}")
+        if not isinstance(hotkey, str) or not isinstance(chain_next, str):
+            raise ConfigError(f"preset hotkey and chain_next must be text for {name}")
+        if type(focus_minutes) is not int or not 0 <= focus_minutes <= 480:
+            raise ConfigError(f"preset.focus_minutes must be between 0 and 480 for {name}")
+        result.append(PresetConfig(
+            name=name, items=references, launch_delay_seconds=delay, run_mode=run_mode,
+            stop_on_failure=stop_on_failure, item_delays=item_delays, item_rules=item_rules,
+            pinned=pinned, hotkey=hotkey.strip(), chain_next=chain_next.strip(),
+            focus_minutes=focus_minutes,
+            extra={key: value for key, value in item.items() if key not in PresetConfig.__dataclass_fields__},
+        ))
+    preset_names = {preset.name for preset in result}
+    hotkeys: set[str] = set()
+    for preset in result:
+        if preset.chain_next and preset.chain_next not in preset_names:
+            raise ConfigError(f"preset {preset.name} chains to missing preset: {preset.chain_next}")
+        if preset.chain_next == preset.name:
+            raise ConfigError(f"preset {preset.name} cannot chain to itself")
+        if preset.hotkey:
+            normalized = preset.hotkey.casefold()
+            if normalized in hotkeys:
+                raise ConfigError(f"duplicate preset hotkey: {preset.hotkey}")
+            hotkeys.add(normalized)
+    by_name = {preset.name: preset for preset in result}
+    for preset in result:
+        seen: set[str] = set()
+        current = preset
+        while current.chain_next:
+            if current.name in seen:
+                raise ConfigError(f"preset chain contains a cycle at: {current.name}")
+            seen.add(current.name)
+            current = by_name[current.chain_next]
     return result
 
 

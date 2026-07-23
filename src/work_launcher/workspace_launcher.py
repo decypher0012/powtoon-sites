@@ -91,6 +91,12 @@ class WorkspaceLauncher:
             rule = preset.item_rules.get(reference, {})
             if datetime.now().weekday() not in rule.get("weekdays", list(range(7))):
                 results.append(WorkspaceLaunchResult(name, kind, True, "skipped by weekday rule", 0)); continue
+            now_clock = datetime.now().strftime("%H:%M")
+            start_time, end_time = rule.get("start_time", ""), rule.get("end_time", "")
+            if start_time and now_clock < start_time:
+                results.append(WorkspaceLaunchResult(name, kind, True, "skipped before allowed time", 0)); continue
+            if end_time and now_clock > end_time:
+                results.append(WorkspaceLaunchResult(name, kind, True, "skipped after allowed time", 0)); continue
             if rule.get("require_network") and not network_available(timeout=0.5):
                 results.append(WorkspaceLaunchResult(name, kind, False, "network rule not satisfied", 0))
                 if preset.stop_on_failure: break
