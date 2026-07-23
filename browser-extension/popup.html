@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Work Launcher</title>
+  <style>
+    body{font:14px system-ui;margin:0;padding:16px;width:280px;color:#162b2a;background:#f4f7f6}
+    h1{font-size:16px;margin:0 0 6px}p{line-height:1.45;color:#5d706e}
+    button{width:100%;padding:10px;border:0;border-radius:7px;background:#087f75;color:#fff;font-weight:600;cursor:pointer}
+    #status{min-height:20px;margin-top:10px}
+  </style>
+</head>
+<body>
+  <h1>Export browser session</h1>
+  <p>Saves HTTP and HTTPS tabs from this window to a local JSON file. No browsing data is transmitted.</p>
+  <button id="export">Export current window</button>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

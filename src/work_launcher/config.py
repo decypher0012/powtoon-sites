@@ -46,6 +46,8 @@ class ApplicationConfig:
     enabled: bool = True
     launch_group: str = ""
     only_if_not_running: bool = False
+    winget_id: str = ""
+    close_on_end: bool = False
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -62,6 +64,16 @@ class PresetConfig:
     hotkey: str = ""
     chain_next: str = ""
     focus_minutes: int = 0
+    window_layout: dict[str, dict[str, int]] = field(default_factory=dict)
+    browser_session: list[str] = field(default_factory=list)
+    parameters: list[dict[str, Any]] = field(default_factory=list)
+    bootstrap_packages: list[str] = field(default_factory=list)
+    actions: list[dict[str, Any]] = field(default_factory=list)
+    close_on_end: bool = False
+    windows_focus: bool = False
+    notification_profile: str = "normal"
+    work_hours_start: str = ""
+    work_hours_end: str = ""
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -99,6 +111,7 @@ class AppSettings:
     trusted_organization_keys: list[str] = field(default_factory=list)
     pinned_items: list[str] = field(default_factory=list)
     launch_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
+    dock_enabled: bool = False
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -186,7 +199,7 @@ def _parse_settings(data: dict[str, Any]) -> AppSettings:
     if settings.duplicate_launch_cooldown_seconds < 0:
         raise ConfigError("settings.duplicate_launch_cooldown_seconds must be >= 0")
     for name in ("remember_window_position", "minimize_to_tray", "launch_with_windows", "window_maximized",
-                 "global_hotkey", "notifications", "sidebar_collapsed"):
+                 "global_hotkey", "notifications", "sidebar_collapsed", "dock_enabled"):
         if type(getattr(settings, name)) is not bool:
             raise ConfigError(f"settings.{name} must be true or false")
     if type(settings.website_page_size) is not int or not 20 <= settings.website_page_size <= 200:
@@ -269,7 +282,7 @@ def _parse_applications(items: Any) -> list[ApplicationConfig]:
             raise ConfigError("application name and path must be non-empty text")
         if not isinstance(arguments, list) or not all(isinstance(value, str) for value in arguments):
             raise ConfigError(f"application.arguments must be a list of strings for {name}")
-        for boolean_name in ("enabled", "only_if_not_running"):
+        for boolean_name in ("enabled", "only_if_not_running", "close_on_end"):
             if type(item.get(boolean_name, boolean_name == "enabled")) is not bool:
                 raise ConfigError(f"application.{boolean_name} must be true or false for {name}")
         result.append(ApplicationConfig(
@@ -278,6 +291,8 @@ def _parse_applications(items: Any) -> list[ApplicationConfig]:
             enabled=item.get("enabled", True),
             launch_group=str(item.get("launch_group", "")).strip(),
             only_if_not_running=item.get("only_if_not_running", False),
+            winget_id=str(item.get("winget_id", "")).strip(),
+            close_on_end=item.get("close_on_end", False),
             extra={key: value for key, value in item.items() if key not in ApplicationConfig.__dataclass_fields__},
         ))
     return result
@@ -342,11 +357,47 @@ def _parse_presets(items: Any, websites: list[WebsiteConfig], applications: list
             raise ConfigError(f"preset hotkey and chain_next must be text for {name}")
         if type(focus_minutes) is not int or not 0 <= focus_minutes <= 480:
             raise ConfigError(f"preset.focus_minutes must be between 0 and 480 for {name}")
+        window_layout = item.get("window_layout", {})
+        if not isinstance(window_layout, dict) or any(
+            not isinstance(key, str) or not isinstance(value, dict)
+            or any(type(value.get(field_name, 0)) is not int for field_name in ("x", "y", "width", "height"))
+            for key, value in window_layout.items()
+        ):
+            raise ConfigError(f"preset.window_layout must map item names to integer rectangles for {name}")
+        browser_session = item.get("browser_session", [])
+        if not isinstance(browser_session, list) or not all(isinstance(url, str) for url in browser_session):
+            raise ConfigError(f"preset.browser_session must be a list of URLs for {name}")
+        for url in browser_session: _validate_url(url)
+        parameters, packages, actions = item.get("parameters", []), item.get("bootstrap_packages", []), item.get("actions", [])
+        if not isinstance(parameters, list) or any(not isinstance(value, dict) or not isinstance(value.get("name"), str) for value in parameters):
+            raise ConfigError(f"preset.parameters must be parameter objects for {name}")
+        if not isinstance(packages, list) or not all(isinstance(value, str) for value in packages):
+            raise ConfigError(f"preset.bootstrap_packages must be text IDs for {name}")
+        if not isinstance(actions, list) or any(not isinstance(value, dict) or not isinstance(value.get("type"), str) for value in actions):
+            raise ConfigError(f"preset.actions must be action objects for {name}")
+        close_on_end, windows_focus = item.get("close_on_end", False), item.get("windows_focus", False)
+        if type(close_on_end) is not bool or type(windows_focus) is not bool:
+            raise ConfigError(f"preset lifecycle switches must be true or false for {name}")
+        notification_profile = item.get("notification_profile", "normal")
+        if notification_profile not in {"normal", "focus", "silent"}:
+            raise ConfigError(f"preset.notification_profile must be normal, focus, or silent for {name}")
+        hours = (str(item.get("work_hours_start", "")), str(item.get("work_hours_end", "")))
+        for clock in hours:
+            if clock:
+                try:
+                    hour, minute = (int(value) for value in clock.split(":"))
+                    if not (0 <= hour <= 23 and 0 <= minute <= 59): raise ValueError
+                except ValueError:
+                    raise ConfigError(f"preset work hours must use HH:MM for {name}") from None
         result.append(PresetConfig(
             name=name, items=references, launch_delay_seconds=delay, run_mode=run_mode,
             stop_on_failure=stop_on_failure, item_delays=item_delays, item_rules=item_rules,
             pinned=pinned, hotkey=hotkey.strip(), chain_next=chain_next.strip(),
             focus_minutes=focus_minutes,
+            window_layout=window_layout, browser_session=browser_session, parameters=parameters,
+            bootstrap_packages=packages, actions=actions, close_on_end=close_on_end,
+            windows_focus=windows_focus, notification_profile=notification_profile,
+            work_hours_start=hours[0], work_hours_end=hours[1],
             extra={key: value for key, value in item.items() if key not in PresetConfig.__dataclass_fields__},
         ))
     preset_names = {preset.name for preset in result}

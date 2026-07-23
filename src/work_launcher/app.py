@@ -10,6 +10,7 @@ import queue
 import threading
 import os
 import subprocess
+import shutil
 from datetime import datetime
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
@@ -61,6 +62,10 @@ from .diagnostics_bundle import create_diagnostics_bundle
 from .windows_tasks import query_task_status, sync_tasks
 from .dashboard_components import ScheduleDiagnosticsDialog, create_nav_icon
 from .workflow_features import preset_readiness, recent_and_frequent, record_launch, resolve_chain
+from .workspace_lifecycle import (
+    SecretStore, apply_parameters, capture_windows, create_captured_preset, import_browser_session,
+    install_winget, parameter_names, restore_window_layout, run_actions, winget_missing, within_work_hours,
+)
 
 
 class WebsiteDialog(tk.Toplevel):
@@ -633,6 +638,8 @@ class WorkLauncherApp(tk.Tk):
         self.tray: TrayController | None = None
         self.hotkey: GlobalHotkey | None = None
         self.preset_hotkeys: PresetHotkeys | None = None
+        self.active_preset = None
+        self.dock_window = None
         self.is_launching = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build()
@@ -655,6 +662,8 @@ class WorkLauncherApp(tk.Tk):
             if not self.hotkey.start(): warnings.append("The Ctrl+Alt+Space global shortcut is already in use.")
         if not safe_mode:
             self._refresh_preset_hotkeys()
+        if not safe_mode and self.config.settings.dock_enabled:
+            self.after(250, self.show_mini_dock)
 
     def _build(self) -> None:
         self.shell = ttk.Frame(self)
@@ -700,6 +709,10 @@ class WorkLauncherApp(tk.Tk):
         tools = ttk.Menubutton(header_actions, text="Tools", style="Secondary.TButton")
         tools_menu = tk.Menu(tools, tearoff=False)
         tools_menu.add_command(label="Manage Workspaces", command=self.open_workspace_manager)
+        tools_menu.add_command(label="Capture Current Workspace", command=self.capture_current_workspace)
+        tools_menu.add_command(label="Import Browser Session", command=self.import_browser_session_file)
+        tools_menu.add_command(label="Export Browser Companion", command=self.export_browser_companion)
+        tools_menu.add_command(label="Show Mini Dock", command=self.show_mini_dock)
         tools_menu.add_command(label="Launch History", command=self.open_session_history)
         tools_menu.add_command(label="Import Browser Bookmarks", command=self.import_bookmarks)
         tools_menu.add_command(label="Backup Configuration", command=self.backup_configuration)
@@ -770,6 +783,10 @@ class WorkLauncherApp(tk.Tk):
             controls, text="Launch", command=self.launch_selected_preset, style="Teal.TButton"
         )
         self.launch_preset_button.pack(side="left", padx=(5, 0))
+        self.end_workspace_button = ttk.Button(
+            controls, text="End workspace", command=self.end_active_workspace, style="Quiet.TButton", state="disabled"
+        )
+        self.end_workspace_button.pack(side="left", padx=(5, 0))
         ttk.Button(controls, text="Check readiness", command=self.check_selected_preset_readiness,
                    style="Compact.TButton").pack(side="left", padx=(5, 0))
 
@@ -1147,6 +1164,77 @@ class WorkLauncherApp(tk.Tk):
     def open_workspace_manager(self) -> None:
         WorkspaceManager(self)
 
+    def capture_current_workspace(self) -> None:
+        windows = capture_windows()
+        if not windows:
+            messagebox.showwarning(APP_NAME, "No capturable application windows were found.", parent=self); return
+        name = simpledialog.askstring("Capture Workspace", "Workspace name:", parent=self)
+        if not name: return
+        if any(item.name.casefold() == name.strip().casefold() for item in self.config.presets):
+            messagebox.showerror(APP_NAME, "A preset with that name already exists.", parent=self); return
+        preset = create_captured_preset(self.config, name.strip(), windows)
+        if not preset.items:
+            messagebox.showwarning(APP_NAME, "No supported application windows were found.", parent=self); return
+        self.config.presets.append(preset); save_config(self.config_path, self.config)
+        self.refresh_preset_controls(); self.preset_var.set(preset.name)
+        messagebox.showinfo(APP_NAME, f'Captured {len(preset.items)} applications in "{preset.name}".', parent=self)
+
+    def import_browser_session_file(self) -> None:
+        path = filedialog.askopenfilename(parent=self, title="Import Browser Session",
+                                          filetypes=[("Browser session JSON", "*.json")])
+        if not path: return
+        preset = next((item for item in self.config.presets if item.name == self.preset_var.get()), None)
+        if not preset:
+            messagebox.showwarning(APP_NAME, "Select or create a preset first.", parent=self); return
+        try:
+            urls = import_browser_session(Path(path))
+            preset.browser_session = urls; save_config(self.config_path, self.config)
+            messagebox.showinfo(APP_NAME, f"Added {len(urls)} browser tabs to {preset.name}.", parent=self)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not import browser session: {exc}", parent=self)
+
+    def export_browser_companion(self) -> None:
+        parent = filedialog.askdirectory(parent=self, title="Choose a folder for the browser companion")
+        if not parent: return
+        source_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2])) / "browser-extension"
+        target = Path(parent) / "WorkLauncherBrowserExtension"
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            for name in ("manifest.json", "popup.html", "popup.js"):
+                shutil.copy2(source_root / name, target / name)
+            messagebox.showinfo(APP_NAME, f"Browser companion exported to:\n{target}\n\nLoad this folder as an unpacked extension.", parent=self)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not export the browser companion: {exc}", parent=self)
+
+    def show_mini_dock(self) -> None:
+        if self.dock_window and self.dock_window.winfo_exists():
+            self.dock_window.deiconify(); self.dock_window.lift(); return
+        dock = tk.Toplevel(self); self.dock_window = dock; dock.title("Work Launcher Dock")
+        dock.attributes("-topmost", True); dock.resizable(False, False)
+        frame = ttk.Frame(dock, padding=8, style="Section.TFrame"); frame.pack()
+        for preset in [item for item in self.config.presets if item.pinned][:8]:
+            ttk.Button(frame, text=preset.name, command=lambda value=preset: self.launch_preset(value),
+                       style="Compact.TButton").pack(side="left", padx=3)
+        ttk.Button(frame, text="Open", command=self._show_from_tray, style="Quiet.TButton").pack(side="left", padx=3)
+        ttk.Button(frame, text="End", command=self.end_active_workspace, style="Quiet.TButton").pack(side="left", padx=3)
+        self.config.settings.dock_enabled = True; save_config(self.config_path, self.config)
+        def close():
+            self.config.settings.dock_enabled = False; save_config(self.config_path, self.config)
+            dock.destroy(); self.dock_window = None
+        dock.protocol("WM_DELETE_WINDOW", close)
+
+    def end_active_workspace(self) -> None:
+        if not self.active_preset:
+            self.set_status("No active workspace session."); return
+        preset = self.active_preset
+        if preset.close_on_end and not messagebox.askyesno(
+                APP_NAME, "Close applications started by this workspace? Applications may show their own save prompts.",
+                parent=self):
+            return
+        failures = self.workspace_launcher.end_session() if preset.close_on_end else []
+        self.active_preset = None; self.end_workspace_button.configure(state="disabled")
+        self.set_status("Workspace ended." if not failures else "Workspace ended with close failures: " + ", ".join(failures))
+
     def launch_selected_preset(self) -> None:
         name = self.preset_var.get()
         preset = next((item for item in self.config.presets if item.name == name), None)
@@ -1157,6 +1245,36 @@ class WorkLauncherApp(tk.Tk):
 
     def launch_preset(self, preset) -> None:
         if preset is None: return
+        if not within_work_hours(preset):
+            messagebox.showwarning(APP_NAME, f'{preset.name} is outside its configured work hours.', parent=self); return
+        parameters = {}
+        secrets = SecretStore(self.config_path.parent / "secrets.dat").load()
+        for definition in preset.parameters:
+            name = str(definition.get("name", "")).strip()
+            if not name: continue
+            secret = bool(definition.get("secret", False))
+            value = simpledialog.askstring("Workspace Parameters", str(definition.get("prompt", name)),
+                                           initialvalue="" if secret else str(definition.get("default", "")),
+                                           show="*" if secret else None, parent=self)
+            if value is None: return
+            parameters[name] = value
+            if secret: secrets[name] = value
+        if secrets: SecretStore(self.config_path.parent / "secrets.dat").save(secrets)
+        launch_config, launch_preset = apply_parameters(self.config, preset, parameters)
+        referenced_apps = {value.split(":", 1)[1] for value in launch_preset.items if value.startswith("application:")}
+        package_ids = list(dict.fromkeys([
+            *launch_preset.bootstrap_packages,
+            *(app.winget_id for app in launch_config.applications if app.name in referenced_apps and app.winget_id),
+        ]))
+        missing = winget_missing(package_ids) if package_ids else []
+        if missing:
+            if not messagebox.askyesno(APP_NAME, "Install missing workspace packages?\n\n" + "\n".join(missing), parent=self): return
+            failed = install_winget(missing)
+            if failed:
+                messagebox.showerror(APP_NAME, "Some packages could not be installed:\n" + "\n".join(failed), parent=self); return
+        original_config = self.workspace_launcher.config
+        self.workspace_launcher.config = launch_config
+        preset = launch_preset
         started = datetime.now().astimezone()
         cancel_event = threading.Event()
         progress = tk.Toplevel(self); progress.title(f"Launching — {preset.name}"); progress.transient(self)
@@ -1170,7 +1288,19 @@ class WorkLauncherApp(tk.Tk):
             def ask(): response["value"] = messagebox.askyesno(APP_NAME, f'Open "{name}"?', parent=progress); ready.set()
             self.after(0, ask); ready.wait(); return response["value"]
         def worker():
-            completed.put(self.workspace_launcher.launch_preset(preset, cancel_event, confirm_item))
+            try:
+                results = self.workspace_launcher.launch_preset(preset, cancel_event, confirm_item)
+                for url in preset.browser_session:
+                    site = WebsiteConfig(url, url, browser_profile=next(iter(launch_config.browser_profiles)))
+                    opened = self.launcher.open_website(site)
+                    from .workspace_launcher import WorkspaceLaunchResult
+                    results.append(WorkspaceLaunchResult(url, "browser-tab", opened.success, opened.message, 0))
+                action_failures = run_actions(preset.actions)
+                from .workspace_launcher import WorkspaceLaunchResult
+                results.extend(WorkspaceLaunchResult(value, "action", False, value, 0) for value in action_failures)
+                completed.put(results)
+            finally:
+                self.workspace_launcher.config = original_config
         threading.Thread(target=worker, name="workspace-launch", daemon=True).start()
         def poll():
             try: results = completed.get_nowait()
@@ -1191,13 +1321,21 @@ class WorkLauncherApp(tk.Tk):
         record_launch(self.config, f"preset:{preset.name}")
         save_config(self.config_path, self.config)
         self._refresh_quick_access()
+        if not failed:
+            self.active_preset = preset
+            self.end_workspace_button.configure(state="normal")
+            if preset.window_layout:
+                self.after(1200, lambda layout=preset.window_layout: restore_window_layout(layout))
+            if preset.windows_focus or preset.notification_profile == "focus":
+                try: os.startfile("ms-clock://focus")
+                except OSError: logging.warning("Windows Focus could not be opened.")
         if preset.focus_minutes > 0 and not failed:
             self.start_focus_session(preset.name, preset.focus_minutes)
         if preset.chain_next and not failed:
             next_preset = next((item for item in self.config.presets if item.name == preset.chain_next), None)
             if next_preset:
                 self.after(250, lambda value=next_preset: self.launch_preset(value))
-        if self.config.settings.notifications:
+        if self.config.settings.notifications and preset.notification_profile != "silent":
             if not (self.tray and self.tray.notify(self.status.get())):
                 notify(APP_NAME, self.status.get())
 

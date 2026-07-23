@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Work Launcher Session Export",
+  "version": "1.0.0",
+  "description": "Exports the current browser window to a local JSON file for Work Launcher.",
+  "permissions": ["tabs", "downloads"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Export this window to Work Launcher"
+  }
+}

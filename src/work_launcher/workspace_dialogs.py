@@ -3,6 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 import shlex
 import copy
+import json
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .config import (ApplicationConfig, PresetConfig, ScheduleConfig, config_to_dict,
@@ -24,6 +25,16 @@ class PresetEditor(tk.Toplevel):
         self.hotkey_var = tk.StringVar(value=preset.hotkey if preset else "")
         self.chain_var = tk.StringVar(value=preset.chain_next if preset else "")
         self.focus_var = tk.IntVar(value=preset.focus_minutes if preset else 0)
+        self.close_on_end_var = tk.BooleanVar(value=preset.close_on_end if preset else False)
+        self.windows_focus_var = tk.BooleanVar(value=preset.windows_focus if preset else False)
+        self.notification_profile_var = tk.StringVar(value=preset.notification_profile if preset else "normal")
+        self.work_start_var = tk.StringVar(value=preset.work_hours_start if preset else "")
+        self.work_end_var = tk.StringVar(value=preset.work_hours_end if preset else "")
+        self.parameters = copy.deepcopy(preset.parameters) if preset else []
+        self.bootstrap_packages = list(preset.bootstrap_packages) if preset else []
+        self.actions = copy.deepcopy(preset.actions) if preset else []
+        self.browser_session = list(preset.browser_session) if preset else []
+        self.window_layout = copy.deepcopy(preset.window_layout) if preset else {}
         top = ttk.Frame(self, padding=12); top.pack(fill="x")
         ttk.Label(top, text="Preset name").pack(side="left"); ttk.Entry(top, textvariable=self.name_var, width=28).pack(side="left", padx=6)
         ttk.Label(top, text="Run mode").pack(side="left", padx=(14, 4))
@@ -39,6 +50,15 @@ class PresetEditor(tk.Toplevel):
         ttk.Spinbox(advanced, from_=0, to=480, textvariable=self.focus_var, width=6).grid(row=0, column=6)
         ttk.Label(advanced, text="Example: Ctrl+Alt+M. A blank chain ends the sequence.",
                   style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(5, 0))
+        ttk.Checkbutton(advanced, text="Close launched apps when ending", variable=self.close_on_end_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(7, 0))
+        ttk.Checkbutton(advanced, text="Open Windows Focus", variable=self.windows_focus_var).grid(row=2, column=2, columnspan=2, sticky="w", pady=(7, 0))
+        ttk.Label(advanced, text="Work hours").grid(row=2, column=4, sticky="e")
+        ttk.Entry(advanced, textvariable=self.work_start_var, width=6).grid(row=2, column=5)
+        ttk.Entry(advanced, textvariable=self.work_end_var, width=6).grid(row=2, column=6)
+        ttk.Button(advanced, text="Advanced lifecycle…", command=self.lifecycle).grid(row=3, column=0, columnspan=2, sticky="w", pady=(7, 0))
+        ttk.Label(advanced, text="Notifications").grid(row=3, column=2, sticky="e", pady=(7, 0))
+        ttk.Combobox(advanced, textvariable=self.notification_profile_var,
+                     values=["normal", "focus", "silent"], state="readonly", width=9).grid(row=3, column=3, sticky="w", pady=(7, 0))
         body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
         self.available = tk.Listbox(body); self.available.pack(side="left", fill="both", expand=True)
         controls = ttk.Frame(body); controls.pack(side="left", padx=8)
@@ -97,6 +117,29 @@ class PresetEditor(tk.Toplevel):
                     messagebox.showerror(self.title(), "Times must use HH:MM.", parent=self); return
         self.item_rules[value] = {"require_network": require_network, "weekdays": parsed,
                                   "start_time": start_time or "", "end_time": end_time or ""}
+    def lifecycle(self):
+        packages = simpledialog.askstring("Machine Bootstrap", "WinGet package IDs, comma separated:",
+                                          initialvalue=", ".join(self.bootstrap_packages), parent=self)
+        if packages is not None:
+            self.bootstrap_packages = [value.strip() for value in packages.split(",") if value.strip()]
+        parameters = simpledialog.askstring(
+            "Runtime Parameters", 'JSON list, e.g. [{"name":"client","prompt":"Client name","secret":false}]:',
+            initialvalue=json.dumps(self.parameters), parent=self)
+        if parameters is not None:
+            try:
+                parsed = json.loads(parameters)
+                if not isinstance(parsed, list): raise ValueError("Expected a JSON list.")
+                self.parameters = parsed
+            except Exception as exc: messagebox.showerror(self.title(), f"Invalid parameters: {exc}", parent=self); return
+        actions = simpledialog.askstring(
+            "Approved Actions", 'JSON list of open_uri, terminal, rdp, or command actions:',
+            initialvalue=json.dumps(self.actions), parent=self)
+        if actions is not None:
+            try:
+                parsed = json.loads(actions)
+                if not isinstance(parsed, list): raise ValueError("Expected a JSON list.")
+                self.actions = parsed
+            except Exception as exc: messagebox.showerror(self.title(), f"Invalid actions: {exc}", parent=self)
     def accept(self):
         name, items = self.name_var.get().strip(), list(self.selected.get(0, "end"))
         if not name or not items: messagebox.showerror(self.title(), "Enter a name and add at least one item.", parent=self); return
@@ -110,7 +153,14 @@ class PresetEditor(tk.Toplevel):
                                    item_delays={key: value for key, value in self.delays.items() if key in items},
                                    item_rules={key: value for key, value in self.item_rules.items() if key in items},
                                    pinned=self.pinned_var.get(), hotkey=self.hotkey_var.get().strip(),
-                                   chain_next=self.chain_var.get().strip(), focus_minutes=focus_minutes)
+                                   chain_next=self.chain_var.get().strip(), focus_minutes=focus_minutes,
+                                   window_layout=self.window_layout, browser_session=self.browser_session,
+                                   parameters=self.parameters, bootstrap_packages=self.bootstrap_packages,
+                                   actions=self.actions, close_on_end=self.close_on_end_var.get(),
+                                   windows_focus=self.windows_focus_var.get(),
+                                   notification_profile=self.notification_profile_var.get(),
+                                   work_hours_start=self.work_start_var.get().strip(),
+                                   work_hours_end=self.work_end_var.get().strip())
         self.destroy()
 
 
@@ -217,8 +267,11 @@ class WorkspaceManager(tk.Toplevel):
             messagebox.showerror(self.title(), f"Invalid arguments: {exc}", parent=self)
             return
         only_once = messagebox.askyesno("Application", "Skip this application when it is already running?", parent=self)
+        winget_id = simpledialog.askstring("Application", "Optional WinGet package ID for machine bootstrap:", parent=self) or ""
+        close_on_end = messagebox.askyesno("Application", "Allow Work Launcher to close this app when ending its workspace?", parent=self)
         self.master_app.config.applications.append(
-            ApplicationConfig(name.strip(), path, arguments, working.strip(), only_if_not_running=only_once)
+            ApplicationConfig(name.strip(), path, arguments, working.strip(), only_if_not_running=only_once,
+                              winget_id=winget_id.strip(), close_on_end=close_on_end)
         )
         self._save()
 
@@ -308,6 +361,9 @@ class WorkspaceManager(tk.Toplevel):
             raw = simpledialog.askstring("Edit Application", "Arguments:", initialvalue=shlex.join(item.arguments), parent=self)
             if path: item.path = path.strip()
             if raw is not None: item.arguments = shlex.split(raw)
+            winget_id = simpledialog.askstring("Edit Application", "WinGet package ID:",
+                                               initialvalue=item.winget_id, parent=self)
+            if winget_id is not None: item.winget_id = winget_id.strip()
             old_ref, new_ref = f"application:{old_name}", f"application:{item.name}"
             for preset in self.master_app.config.presets:
                 preset.items = [new_ref if value == old_ref else value for value in preset.items]
@@ -323,6 +379,12 @@ class WorkspaceManager(tk.Toplevel):
             item.item_rules = dialog.result.item_rules
             item.pinned, item.hotkey = dialog.result.pinned, dialog.result.hotkey
             item.chain_next, item.focus_minutes = dialog.result.chain_next, dialog.result.focus_minutes
+            item.window_layout, item.browser_session = dialog.result.window_layout, dialog.result.browser_session
+            item.parameters, item.bootstrap_packages = dialog.result.parameters, dialog.result.bootstrap_packages
+            item.actions, item.close_on_end = dialog.result.actions, dialog.result.close_on_end
+            item.windows_focus = dialog.result.windows_focus
+            item.notification_profile = dialog.result.notification_profile
+            item.work_hours_start, item.work_hours_end = dialog.result.work_hours_start, dialog.result.work_hours_end
             for schedule in self.master_app.config.schedules:
                 if schedule.preset == old_name: schedule.preset = item.name
             for other in self.master_app.config.presets:

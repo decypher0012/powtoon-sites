@@ -5,7 +5,7 @@ a = Analysis(
     ['src\\work_launcher\\__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('browser-extension', 'browser-extension')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

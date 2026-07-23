@@ -50,6 +50,7 @@ class WorkspaceLauncher:
         self.popen = popen
         self.process_check = process_check
         self.system_open = system_open or getattr(os, "startfile", None)
+        self.session_processes: list[tuple[str, object, bool]] = []
 
     def launch_application(self, application: ApplicationConfig) -> WorkspaceLaunchResult:
         started = time.monotonic()
@@ -65,7 +66,8 @@ class WorkspaceLauncher:
             if not working.is_dir():
                 raise FileNotFoundError(f"Working directory was not found: {working}")
             if path.suffix.casefold() in {".exe", ".com"}:
-                self.popen([str(path), *application.arguments], cwd=str(working), shell=False)
+                process = self.popen([str(path), *application.arguments], cwd=str(working), shell=False)
+                self.session_processes.append((application.name, process, application.close_on_end))
             elif self.system_open and not application.arguments:
                 self.system_open(str(path))
             else:
@@ -115,3 +117,17 @@ class WorkspaceLauncher:
             if preset.stop_on_failure and results and not results[-1].success:
                 break
         return results
+
+    def end_session(self) -> list[str]:
+        failures = []
+        for name, process, close_allowed in reversed(self.session_processes):
+            if not close_allowed:
+                continue
+            try:
+                poll = getattr(process, "poll", lambda: None)
+                if poll() is None:
+                    getattr(process, "terminate")()
+            except Exception as exc:
+                failures.append(f"{name}: {exc}")
+        self.session_processes.clear()
+        return failures
