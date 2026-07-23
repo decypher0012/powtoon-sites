@@ -91,7 +91,7 @@ class WebsiteDialog(tk.Toplevel):
         ttk.Checkbutton(frame, text="Enabled", variable=self.enabled_var).grid(row=6, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Selected by Default", variable=self.selected_var).grid(row=7, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Favorite", variable=self.favorite_var).grid(row=8, column=1, sticky="w")
-        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, foreground="#b00020", wraplength=420, style="Card.TLabel").grid(row=9, column=0, columnspan=2, sticky="w", pady=6)
+        self.error_var = tk.StringVar(); ttk.Label(frame, textvariable=self.error_var, wraplength=420, style="Error.TLabel").grid(row=9, column=0, columnspan=2, sticky="w", pady=6)
         buttons = ttk.Frame(frame); buttons.grid(row=10, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=3)
         ttk.Button(buttons, text="Save", command=self.accept, style="Primary.TButton").pack(side="right", padx=3)
@@ -672,22 +672,22 @@ class WorkLauncherApp(tk.Tk):
                                 style="NavPrimary.TButton" if name == "Dashboard" else "Nav.TButton")
             button.pack(fill="x", pady=2); self.nav_buttons[name] = button
         ttk.Button(self.sidebar, text="Collapse navigation", command=self.toggle_sidebar, style="Nav.TButton").pack(side="bottom", fill="x", pady=(8, 2))
-        ttk.Label(self.sidebar, text="Ctrl+K  Command palette", style="Sidebar.TLabel", wraplength=145).pack(side="bottom", anchor="w", padx=8, pady=8)
-        self.dashboard = ttk.Frame(self.shell, padding=24, style="Card.TFrame")
+        ttk.Label(self.sidebar, text="Ctrl+K  Commands\nCtrl+F  Find", style="Sidebar.TLabel", wraplength=145).pack(side="bottom", anchor="w", padx=8, pady=8)
+        self.dashboard = ttk.Frame(self.shell, padding=20)
         self.shell.bind("<Configure>", self._resize_dashboard)
 
-        header = ttk.Frame(self.dashboard, style="Card.TFrame")
-        header.pack(fill="x")
-        title_box = ttk.Frame(header, style="Card.TFrame")
+        header = ttk.Frame(self.dashboard, padding=(22, 18), style="Hero.TFrame")
+        header.pack(fill="x", pady=(0, 12))
+        title_box = ttk.Frame(header, style="Hero.TFrame")
         title_box.pack(side="left", fill="x", expand=True)
-        ttk.Label(title_box, text="WORKSPACE CONTROL", style="Eyebrow.TLabel").pack(anchor="w")
-        ttk.Label(title_box, text="Good to see you", style="DashboardHeader.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(title_box, text="WORKSPACE CONTROL", style="HeroEyebrow.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="Ready when you are.", style="HeroTitle.TLabel").pack(anchor="w", pady=(2, 0))
         ttk.Label(
             title_box,
-            text="Everything you need to start a focused work session.",
-            style="DashboardSubtitle.TLabel",
+            text="Launch the right workspace with less friction.",
+            style="HeroSubtitle.TLabel",
         ).pack(anchor="w", pady=(2, 0))
-        header_actions = ttk.Frame(header, style="Card.TFrame")
+        header_actions = ttk.Frame(header, style="Hero.TFrame")
         header_actions.pack(side="right")
         self.update_summary_var = tk.StringVar(value="Updates: not checked")
         self.update_details_var = tk.StringVar(value="Last checked: Never")
@@ -720,18 +720,18 @@ class WorkLauncherApp(tk.Tk):
         tools.configure(menu=tools_menu)
         tools.pack(side="left")
 
-        stats = ttk.Frame(self.dashboard, style="Card.TFrame")
-        stats.pack(fill="x", pady=(18, 4))
+        stats = ttk.Frame(self.dashboard)
+        stats.pack(fill="x", pady=(0, 12))
         self.website_count_var = tk.StringVar(value="0")
         self.preset_count_var = tk.StringVar(value="0")
         self.schedule_count_var = tk.StringVar(value="0")
         for label, variable in (("ACTIVE WEBSITES", self.website_count_var), ("WORKSPACE PRESETS", self.preset_count_var),
                                 ("ENABLED SCHEDULES", self.schedule_count_var)):
-            card = ttk.Frame(stats, padding=(16, 10), style="Surface.TFrame"); card.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            card = ttk.Frame(stats, padding=(16, 11), style="Stat.TFrame"); card.pack(side="left", fill="x", expand=True, padx=(0, 8))
             ttk.Label(card, textvariable=variable, style="StatValue.TLabel").pack(anchor="w")
             ttk.Label(card, text=label, style="StatLabel.TLabel").pack(anchor="w")
 
-        toolbar = ttk.Frame(self.dashboard, padding=(0, 14, 0, 8), style="Card.TFrame")
+        toolbar = ttk.Frame(self.dashboard, padding=(14, 12), style="Section.TFrame")
         toolbar.pack(fill="x")
         self.open_selected_button = ttk.Button(
             toolbar, text="Open Selected", command=self.open_selected, style="Primary.TButton"
@@ -740,16 +740,16 @@ class WorkLauncherApp(tk.Tk):
         self.open_all_button = ttk.Button(
             toolbar, text="Open All", command=self.open_all_work_apps, style="Secondary.TButton"
         )
-        self.open_all_button.pack(side="left", padx=(8, 18))
+        self.open_all_button.pack(side="left", padx=(8, 20))
 
         self.search_var = tk.StringVar()
         ttk.Label(toolbar, text="Find", style="Card.TLabel").pack(side="left", padx=(0, 5))
-        search = ttk.Entry(toolbar, textvariable=self.search_var, width=28)
-        search.pack(side="left", fill="x", expand=True)
+        self.search_entry = ttk.Entry(toolbar, textvariable=self.search_var, width=28)
+        self.search_entry.pack(side="left", fill="x", expand=True)
         self.search_var.trace_add("write", lambda *_args: self._filters_changed())
 
-        controls = ttk.Frame(self.dashboard, padding=(0, 0, 0, 12), style="Card.TFrame")
-        controls.pack(fill="x")
+        controls = ttk.Frame(self.dashboard, padding=(14, 10), style="Section.TFrame")
+        controls.pack(fill="x", pady=(8, 0))
 
         self.launch_group_var = tk.StringVar(value="All Websites")
         ttk.Label(controls, text="Launch group", style="Card.TLabel").pack(side="left", padx=(0, 5))
@@ -767,7 +767,7 @@ class WorkLauncherApp(tk.Tk):
         self.preset_combo = ttk.Combobox(controls, textvariable=self.preset_var, state="readonly", width=13)
         self.preset_combo.pack(side="left")
         self.launch_preset_button = ttk.Button(
-            controls, text="Launch", command=self.launch_selected_preset, style="Compact.TButton"
+            controls, text="Launch", command=self.launch_selected_preset, style="Teal.TButton"
         )
         self.launch_preset_button.pack(side="left", padx=(5, 0))
         ttk.Button(controls, text="Check readiness", command=self.check_selected_preset_readiness,
@@ -779,14 +779,18 @@ class WorkLauncherApp(tk.Tk):
                                          values=["All", "Favorites", "Enabled", "Disabled"])
         self.filter_combo.pack(side="left"); self.filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._filters_changed())
 
-        self.quick_frame = ttk.LabelFrame(self.dashboard, text="Quick access", padding=(10, 7))
-        self.quick_frame.pack(fill="x", pady=(0, 8))
+        self.quick_frame = ttk.Frame(self.dashboard, padding=(14, 10), style="Section.TFrame")
+        self.quick_frame.pack(fill="x", pady=8)
+        quick_header = ttk.Frame(self.quick_frame, style="Card.TFrame"); quick_header.pack(fill="x")
+        ttk.Label(quick_header, text="Quick access", style="CardSection.TLabel").pack(side="left")
+        ttk.Label(quick_header, text="Pinned, recent, and frequent", style="DashboardSubtitle.TLabel").pack(side="left", padx=10)
+        self.quick_content = ttk.Frame(self.quick_frame, style="Card.TFrame"); self.quick_content.pack(fill="x", pady=(8, 0))
 
         self.website_vars: list[tk.BooleanVar] = []
         self.displayed_websites: list[WebsiteConfig] = []
         self.website_page = 0
         self.site_icons = []
-        list_card = ttk.Frame(self.dashboard, padding=14, style="Row.TFrame")
+        list_card = ttk.Frame(self.dashboard, padding=14, style="Section.TFrame")
         list_card.pack(fill="both", expand=True)
         list_header = ttk.Frame(list_card, style="Card.TFrame")
         list_header.pack(fill="x", pady=(0, 10))
@@ -794,9 +798,9 @@ class WorkLauncherApp(tk.Tk):
         self.selection_summary_var = tk.StringVar(value="0 selected")
         ttk.Label(list_header, textvariable=self.selection_summary_var, style="DashboardSubtitle.TLabel").pack(side="left", padx=10)
         ttk.Button(list_header, text="Add website", command=self.add_first_website, style="Compact.TButton").pack(side="right")
-        ttk.Button(list_header, text="Manage", command=self.open_settings, style="Compact.TButton").pack(side="right", padx=5)
-        ttk.Button(list_header, text="Clear", command=self.clear_selection, style="Compact.TButton").pack(side="right")
-        ttk.Button(list_header, text="Select all", command=self.select_all, style="Compact.TButton").pack(side="right", padx=5)
+        ttk.Button(list_header, text="Manage", command=self.open_settings, style="Quiet.TButton").pack(side="right", padx=5)
+        ttk.Button(list_header, text="Clear", command=self.clear_selection, style="Quiet.TButton").pack(side="right")
+        ttk.Button(list_header, text="Select all", command=self.select_all, style="Quiet.TButton").pack(side="right", padx=5)
         self.next_page_button = ttk.Button(list_header, text="Next", command=lambda: self.change_website_page(1), style="Compact.TButton")
         self.next_page_button.pack(side="right", padx=(5, 0))
         self.previous_page_button = ttk.Button(list_header, text="Previous", command=lambda: self.change_website_page(-1), style="Compact.TButton")
@@ -822,7 +826,7 @@ class WorkLauncherApp(tk.Tk):
         self.website_canvas.bind("<Enter>", lambda _event: self.bind_all("<MouseWheel>", self._scroll_websites))
         self.website_canvas.bind("<Leave>", lambda _event: self.unbind_all("<MouseWheel>"))
 
-        footer = ttk.Frame(self.dashboard, padding=(0, 12, 0, 0), style="Card.TFrame")
+        footer = ttk.Frame(self.dashboard, padding=(2, 10, 2, 0))
         footer.pack(fill="x")
         self.status = tk.StringVar(value="Ready.")
         ttk.Label(footer, textvariable=self.status, style="Footer.TLabel").pack(side="left", fill="x", expand=True)
@@ -834,6 +838,10 @@ class WorkLauncherApp(tk.Tk):
         self.bind_all("<Escape>", lambda event: self._escape_handler())
         self.bind_all("<Control-a>", lambda event: self.select_all())
         self.bind_all("<Control-k>", lambda event: self.open_command_palette())
+        self.bind_all("<Control-f>", lambda event: (self.search_entry.focus_set(), self.search_entry.select_range(0, "end")))
+        self.bind_all("<Alt-Key-1>", lambda event: self._run_nav_action("Dashboard", lambda: self.website_canvas.yview_moveto(0)))
+        self.bind_all("<Alt-Key-2>", lambda event: self._run_nav_action("Workspaces", self.open_workspace_manager))
+        self.bind_all("<Alt-Key-3>", lambda event: self._run_nav_action("Launch history", self.open_session_history))
 
     def _resize_dashboard(self, event) -> None:
         collapsed = self.config.settings.sidebar_collapsed or event.width < 980
@@ -1003,15 +1011,15 @@ class WorkLauncherApp(tk.Tk):
         save_config(self.config_path, self.config); self.refresh_ui()
 
     def _refresh_quick_access(self) -> None:
-        if not hasattr(self, "quick_frame"): return
-        for child in self.quick_frame.winfo_children(): child.destroy()
+        if not hasattr(self, "quick_content"): return
+        for child in self.quick_content.winfo_children(): child.destroy()
         recent, frequent = recent_and_frequent(self.config, 3)
         pinned = list(self.config.settings.pinned_items)
         pinned.extend(f"preset:{preset.name}" for preset in self.config.presets if preset.pinned)
         keys = list(dict.fromkeys([*pinned, *recent, *frequent]))[:8]
         if not keys:
-            ttk.Label(self.quick_frame, text="Pin a website or preset to keep it here.",
-                      style="Muted.TLabel").pack(side="left")
+            ttk.Label(self.quick_content, text="Pin a website or preset to keep it here.",
+                      style="DashboardSubtitle.TLabel").pack(side="left")
             return
         for key in keys:
             kind, name = key.split(":", 1)
@@ -1022,7 +1030,7 @@ class WorkLauncherApp(tk.Tk):
                 site = next((value for value in self.config.websites if value.name == name), None)
                 command = (lambda value=site: self.open_single(value)) if site else None
             if command:
-                ttk.Button(self.quick_frame, text=name, command=command, style="Compact.TButton").pack(side="left", padx=(0, 5))
+                ttk.Button(self.quick_content, text=name, command=command, style="Compact.TButton").pack(side="left", padx=(0, 6))
 
     def edit_inline_website(self, website: WebsiteConfig) -> None:
         dialog = WebsiteDialog(self, "Edit Website", self.config.browser_profiles, copy.deepcopy(website)); self.wait_window(dialog)

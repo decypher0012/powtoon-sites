@@ -19,30 +19,27 @@
 
 | Role | Hex | CSS Variable |
 |------|-----|--------------|
-| Primary | `#0D9488` | `--color-primary` |
+| Primary | `#087F75` | `--color-primary` |
 | On Primary | `#FFFFFF` | `--color-on-primary` |
 | Secondary | `#14B8A6` | `--color-secondary` |
-| Accent/CTA | `#EA580C` | `--color-accent` |
-| Background | `#F0FDFA` | `--color-background` |
-| Foreground | `#134E4A` | `--color-foreground` |
-| Muted | `#E8F1F4` | `--color-muted` |
-| Border | `#99F6E4` | `--color-border` |
-| Destructive | `#DC2626` | `--color-destructive` |
-| Ring | `#0D9488` | `--color-ring` |
+| Accent/CTA | `#D55216` | `--color-accent` |
+| Background | `#F4F7F6` | `--color-background` |
+| Foreground | `#162B2A` | `--color-foreground` |
+| Muted | `#E9F3F1` | `--color-muted` |
+| Border | `#CFDFDC` | `--color-border` |
+| Destructive | `#B91C1C` | `--color-destructive` |
+| Ring | `#087F75` | `--color-ring` |
 
 **Color Notes:** Teal focus + action orange [Accent adjusted from #F97316 for WCAG 3:1]
 
 ### Typography
 
-- **Heading Font:** Plus Jakarta Sans
-- **Body Font:** Plus Jakarta Sans
+- **Heading Font:** Segoe UI Variable Display
+- **Body Font:** Segoe UI Variable
 - **Mood:** friendly, modern, saas, clean, approachable, professional
-- **Google Fonts:** [Plus Jakarta Sans + Plus Jakarta Sans](https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap)
+- **Delivery:** Native Windows system fonts; no network font dependency.
 
-**CSS Import:**
-```css
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
-```
+**Font stack:** `"Segoe UI Variable", "Segoe UI", sans-serif`
 
 ### Spacing Variables
 
@@ -76,7 +73,7 @@
 ```css
 /* Primary Button */
 .btn-primary {
-  background: #EA580C;
+  background: #D55216;
   color: white;
   padding: 12px 24px;
   border-radius: 8px;
@@ -93,8 +90,8 @@
 /* Secondary Button */
 .btn-secondary {
   background: transparent;
-  color: #0D9488;
-  border: 2px solid #0D9488;
+  color: #087F75;
+  border: 2px solid #087F75;
   padding: 12px 24px;
   border-radius: 8px;
   font-weight: 600;
@@ -107,7 +104,7 @@
 
 ```css
 .card {
-  background: #F0FDFA;
+  background: #FFFFFF;
   border-radius: 12px;
   padding: 24px;
   box-shadow: var(--shadow-md);
@@ -133,9 +130,9 @@
 }
 
 .input:focus {
-  border-color: #0D9488;
+  border-color: #087F75;
   outline: none;
-  box-shadow: 0 0 0 3px #0D948820;
+  box-shadow: 0 0 0 3px #087F7520;
 }
 ```
 
